@@ -13,8 +13,8 @@
 // =============================================================
 
 window.APP_CONFIG = {
-  SUPABASE_URL: "SEU_SUPABASE_URL_AQUI",       // ex: https://abcdefgh.supabase.co
-  SUPABASE_ANON_KEY: "SUA_SUPABASE_ANON_KEY_AQUI",
+  SUPABASE_URL: "https://tvhapuaewlewfuwtpjvb.supabase.co",
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2aGFwdWFld2xld2Z1d3RwanZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3Mzc4NjksImV4cCI6MjEwNTMxMzg2OX0.ild2KCDnockaqo9nzD_fnB2eGTjd5ZczJaJbiSWw6VU",
 
   // Nome que aparece no topo do menu (troque pelo que quiser).
   NOME_DO_PAINEL: "Painel",
