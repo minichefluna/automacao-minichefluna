@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Painel de automação</title>
+  <link rel="stylesheet" href="assets/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%232563EB'/></svg>">
+</head>
+<body>
+
+  <!-- =========================================================
+       PÁGINA 1: LOGIN
+       ========================================================= -->
+  <div id="tela-login">
+    <form class="caixa-login" id="form-login" autocomplete="on">
+      <div class="marca">P</div>
+      <h1>Entrar no painel</h1>
+      <p class="fraco pequeno" style="margin:6px 0 22px">Acesse com o seu e-mail e a sua senha.</p>
+
+      <div class="campo">
+        <label for="login-email">E-mail</label>
+        <input type="email" id="login-email" name="email" placeholder="voce@exemplo.com" required>
+      </div>
+
+      <div class="campo">
+        <label for="login-senha">Senha</label>
+        <input type="password" id="login-senha" name="password" placeholder="Sua senha" required>
+      </div>
+
+      <button type="submit" class="botao primario" style="width:100%" id="btn-entrar">Entrar</button>
+
+      <div class="aviso erro erro-login" id="erro-login" hidden></div>
+
+      <div class="aviso info" id="aviso-modo-local" style="margin-top:18px" hidden>
+        <span>
+          <strong>Modo de teste local:</strong> qualquer e-mail e uma senha de 5 dígitos entram.
+          No ar (produção), o login será pelo Supabase.
+        </span>
+      </div>
+    </form>
+  </div>
+
+  <!-- =========================================================
+       PÁGINA 2: O SISTEMA (só aparece depois de logar)
+       ========================================================= -->
+  <div id="app" hidden>
+
+    <!-- Menu lateral -->
+    <aside class="lateral">
+      <div class="topo">
+        <div class="marca">P</div>
+        <strong id="nome-painel">Painel</strong>
+      </div>
+
+      <nav>
+        <button class="item-menu" data-view="inicio">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+          Início
+        </button>
+        <button class="item-menu" data-view="calendario">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+          Calendário
+        </button>
+        <button class="item-menu" data-view="instagram">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="1.2" fill="currentColor" stroke="none"/></svg>
+          Instagram
+        </button>
+      </nav>
+
+      <div class="rodape">
+        <button class="item-menu" id="btn-sair">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 17l5-5-5-5"/><path d="M20 12H9"/><path d="M12 20H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6"/></svg>
+          Sair
+        </button>
+      </div>
+    </aside>
+
+    <!-- Conteúdo -->
+    <main class="conteudo" id="conteudo"></main>
+  </div>
+
+  <!-- Cliente do Supabase (só é usado quando a configuração está preenchida) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/config.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
