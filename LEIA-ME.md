@@ -184,7 +184,21 @@ curl -H "x-sched-key: SEU_SCHED_SECRET_AQUI" https://SEU_PROJETO.supabase.co/fun
 curl -X POST -H "x-sched-key: SEU_SCHED_SECRET_AQUI" https://SEU_PROJETO.supabase.co/functions/v1/ig-subscribe
 ```
 
-Publique essa função com `--no-verify-jwt`, como os robôs agendados. Ela é protegida
+Se mesmo assim nenhum evento chegar, confira o cadastro do webhook no APP com a função
+`ig-webhook-setup` (GET lê, POST cadastra a URL certa com os três campos). Ela precisa
+do segredo `META_APP_SECRET`, que é a **Chave secreta do aplicativo** da tela
+Configurações do app > Básico. Atenção: é diferente do segredo que aparece na tela do
+Instagram, e o Meta recusa um no lugar do outro.
+
+```
+curl -X POST -H "x-sched-key: SEU_SCHED_SECRET_AQUI" "https://SEU_PROJETO.supabase.co/functions/v1/ig-webhook-setup?app_id=ID_DO_SEU_APP"
+```
+
+Um sinal seguro de que o cadastro está certo: nos logs da `instagram-webhook` aparece uma
+chamada GET com o agente `facebookplatform`. Se nunca apareceu, o Meta nunca falou com
+o seu webhook.
+
+Publique essas funções com `--no-verify-jwt`, como os robôs agendados. Ela é protegida
 pelo `SCHED_SECRET`. Rode de novo sempre que trocar o token do Instagram por um de
 outra conta.
 
