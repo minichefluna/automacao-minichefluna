@@ -108,11 +108,16 @@ Com a CLI do Supabase instalada e o projeto linkado:
 
 ```
 supabase functions deploy instagram-webhook --no-verify-jwt
-supabase functions deploy ig-scheduler
-supabase functions deploy ig-token-refresh
+supabase functions deploy ig-scheduler --no-verify-jwt
+supabase functions deploy ig-token-refresh --no-verify-jwt
 supabase functions deploy ig-insights
 supabase functions deploy ig-media
+supabase functions deploy ig-subscribe --no-verify-jwt
 ```
+
+> O `ig-scheduler` e o `ig-token-refresh` também precisam de `--no-verify-jwt`: quem
+> chama eles é o pg_cron, que se identifica pelo `SCHED_SECRET`, não por login. Com a
+> verificação de JWT ligada, o cron leva erro 401 e a fila nunca anda.
 
 > O `--no-verify-jwt` na `instagram-webhook` é obrigatório: essa função precisa ser
 > **pública**, porque quem chama ela é o Meta, e o Meta não tem login do Supabase.
@@ -164,6 +169,24 @@ No app do Meta, em **Webhooks**:
 
 > O `messaging_postbacks` é o que faz os botões da conversa funcionarem. Sem ele, a
 > primeira DM chega, mas nada acontece quando a pessoa toca no botão.
+
+**Passo que costuma ficar esquecido: inscrever a CONTA, não só o app.** Na API com
+Instagram Login, assinar os campos no painel do app não basta. A conta do Instagram
+também precisa estar inscrita (`subscribed_apps`), senão o Meta não entrega nenhum
+comentário ao webhook, e nada acontece, sem erro nenhum. A função `ig-subscribe` faz
+isso por você:
+
+```
+# ver em quais campos a conta está inscrita
+curl -H "x-sched-key: SEU_SCHED_SECRET_AQUI" https://SEU_PROJETO.supabase.co/functions/v1/ig-subscribe
+
+# inscrever em comments, messages e messaging_postbacks
+curl -X POST -H "x-sched-key: SEU_SCHED_SECRET_AQUI" https://SEU_PROJETO.supabase.co/functions/v1/ig-subscribe
+```
+
+Publique essa função com `--no-verify-jwt`, como os robôs agendados. Ela é protegida
+pelo `SCHED_SECRET`. Rode de novo sempre que trocar o token do Instagram por um de
+outra conta.
 
 ---
 
