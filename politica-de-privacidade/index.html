@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Política de Privacidade | Mini Chef Luna</title>
+<meta name="description" content="Política de privacidade da automação de comentários e mensagens diretas do Instagram de Ellen Mariane Santos Machado (@minichef.luna), em conformidade com a LGPD e com as políticas da Plataforma da Meta.">
+<meta name="robots" content="index, follow">
+<meta name="author" content="Ellen Mariane Santos Machado">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%232563EB'/></svg>">
+<style>
+  /* Mesma paleta e tipografia do painel, para a página combinar com o sistema. */
+  :root {
+    --fundo:        #F7F8FA;
+    --superficie:   #FFFFFF;
+    --texto:        #1A1A1A;
+    --texto-fraco:  #6B7280;
+    --borda:        #E5E7EB;
+    --destaque:     #2563EB;
+    --destaque-escuro: #1D4ED8;
+    --destaque-suave: #EFF4FE;
+    --raio:   10px;
+    --raio-g: 14px;
+    --sombra: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .06);
+    --fonte: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--fundo);
+    color: var(--texto);
+    font-family: var(--fonte);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Atalho para quem navega por teclado ou leitor de tela. */
+  .pular {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    background: var(--destaque);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 0 0 var(--raio) 0;
+    z-index: 10;
+  }
+  .pular:focus { left: 0; }
+
+  .envolucro {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+
+  header.topo {
+    background: var(--superficie);
+    border-bottom: 1px solid var(--borda);
+    padding: 28px 0;
+  }
+
+  .marca {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .marca .sinal {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+    background: var(--destaque);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 16px;
+    flex: none;
+  }
+  .marca .nome { font-weight: 600; font-size: 15px; }
+  .marca .arroba { color: var(--texto-fraco); font-size: 13px; }
+
+  main { padding: 40px 0 64px; }
+
+  h1 {
+    font-size: 30px;
+    line-height: 1.25;
+    letter-spacing: -.02em;
+    margin: 0 0 12px;
+    font-weight: 700;
+  }
+
+  .atualizacao {
+    display: inline-block;
+    background: var(--destaque-suave);
+    color: var(--destaque-escuro);
+    border: 1px solid #D7E3FB;
+    border-radius: 999px;
+    padding: 5px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 28px;
+  }
+
+  h2 {
+    font-size: 21px;
+    line-height: 1.3;
+    letter-spacing: -.01em;
+    margin: 44px 0 14px;
+    font-weight: 650;
+    scroll-margin-top: 24px;
+  }
+
+  h3 {
+    font-size: 16px;
+    margin: 26px 0 8px;
+    font-weight: 600;
+  }
+
+  p, li { color: #2B2F36; }
+  p { margin: 0 0 16px; }
+
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 9px; }
+
+  a {
+    color: var(--destaque);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  a:hover { color: var(--destaque-escuro); }
+  a:focus-visible {
+    outline: 2px solid var(--destaque);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  strong { font-weight: 650; }
+
+  .cartao {
+    background: var(--superficie);
+    border: 1px solid var(--borda);
+    border-radius: var(--raio-g);
+    padding: 22px 24px;
+    box-shadow: var(--sombra);
+    margin: 22px 0;
+  }
+  .cartao > :last-child { margin-bottom: 0; }
+  .cartao h3:first-child { margin-top: 0; }
+
+  .cartao.destaque {
+    border-color: #D7E3FB;
+    background: var(--destaque-suave);
+  }
+
+  .indice {
+    background: var(--superficie);
+    border: 1px solid var(--borda);
+    border-radius: var(--raio-g);
+    padding: 20px 24px;
+    box-shadow: var(--sombra);
+    margin-bottom: 8px;
+  }
+  .indice h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--texto-fraco);
+    font-weight: 600;
+  }
+  .indice ol { margin: 0; padding-left: 20px; }
+  .indice li { margin-bottom: 6px; }
+
+  .tabela-area { overflow-x: auto; margin: 0 0 18px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 15px;
+    min-width: 460px;
+    background: var(--superficie);
+    border: 1px solid var(--borda);
+    border-radius: var(--raio);
+    overflow: hidden;
+  }
+  caption {
+    text-align: left;
+    font-size: 13px;
+    color: var(--texto-fraco);
+    padding-bottom: 8px;
+  }
+  th, td {
+    text-align: left;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--borda);
+    vertical-align: top;
+  }
+  th { background: #FAFBFC; font-weight: 600; font-size: 14px; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  footer.rodape {
+    background: var(--superficie);
+    border-top: 1px solid var(--borda);
+    padding: 28px 0 40px;
+    font-size: 14px;
+    color: var(--texto-fraco);
+  }
+  footer.rodape p { color: var(--texto-fraco); }
+  footer.rodape p:last-child { margin-bottom: 0; }
+
+  @media (max-width: 600px) {
+    body { font-size: 15.5px; }
+    h1 { font-size: 25px; }
+    h2 { font-size: 19px; }
+    main { padding: 30px 0 48px; }
+    .cartao, .indice { padding: 18px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<a class="pular" href="#conteudo">Pular para o conteúdo</a>
+
+<header class="topo">
+  <div class="envolucro">
+    <div class="marca">
+      <span class="sinal" aria-hidden="true">M</span>
+      <span>
+        <span class="nome">Mini Chef Luna</span><br>
+        <span class="arroba">@minichef.luna</span>
+      </span>
+    </div>
+  </div>
+</header>
+
+<main id="conteudo">
+  <div class="envolucro">
+
+    <h1>Política de Privacidade</h1>
+    <p class="atualizacao">Última atualização: 18 de setembro de 2026</p>
+
+    <nav class="indice" aria-label="Índice da política">
+      <h2>Nesta página</h2>
+      <ol>
+        <li><a href="#quem-somos">Quem somos</a></li>
+        <li><a href="#dados-coletados">Dados que coletamos</a></li>
+        <li><a href="#uso-dos-dados">Como e por que usamos os dados</a></li>
+        <li><a href="#compartilhamento">Compartilhamento e operadores</a></li>
+        <li><a href="#transferencia-internacional">Transferência internacional</a></li>
+        <li><a href="#retencao">Retenção e exclusão</a></li>
+        <li><a href="#seguranca">Segurança</a></li>
+        <li><a href="#direitos">Seus direitos pela LGPD</a></li>
+        <li><a href="#exclusao-de-dados">Como pedir a exclusão dos seus dados</a></li>
+        <li><a href="#menores">Dados de menores</a></li>
+        <li><a href="#alteracoes">Alterações nesta política</a></li>
+        <li><a href="#contato">Contato</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="quem-somos">1. Quem somos</h2>
+    <p>
+      Esta política descreve como <strong>Ellen Mariane Santos Machado</strong>, responsável pelo
+      perfil <strong>@minichef.luna</strong> no Instagram, trata os dados pessoais de quem interage
+      com esse perfil. Para os fins da Lei Geral de Proteção de Dados (Lei 13.709/2018), Ellen
+      Mariane Santos Machado é a <strong>controladora</strong> desses dados, com sede em
+      Tatuí, São Paulo, Brasil.
+    </p>
+    <p>
+      Utilizamos uma ferramenta própria de automação que responde a comentários e a mensagens
+      diretas no Instagram. Essa ferramenta funciona exclusivamente por meio da
+      <strong>API oficial da Meta</strong> (Instagram API with Instagram Login), respeitando os
+      Termos da Plataforma e as Políticas do Desenvolvedor da Meta. Não utilizamos robôs que
+      simulam o uso do aplicativo, nem qualquer método não autorizado de acesso à sua conta.
+    </p>
+    <p>
+      Em termos simples: quando você comenta uma palavra combinada em uma publicação nossa, ou
+      nos envia uma mensagem, a ferramenta identifica essa interação e envia uma resposta
+      automática no seu direct. Nada acontece sem que você dê o primeiro passo.
+    </p>
+
+    <h2 id="dados-coletados">2. Dados que coletamos</h2>
+    <p>Coletamos apenas o mínimo necessário para responder a você:</p>
+    <ul>
+      <li><strong>Seu identificador e seu nome de usuário no Instagram:</strong> o ID numérico
+        fornecido pela Meta e o seu @, para saber a quem responder.</li>
+      <li><strong>O conteúdo da interação que iniciou o contato:</strong> o texto do comentário
+        ou da mensagem que você nos enviou, limitado aos primeiros 200 caracteres.</li>
+      <li><strong>O contexto da conversa:</strong> qual automação foi acionada, em que etapa da
+        conversa você está e em quais botões você tocou.</li>
+      <li><strong>Registros técnicos de envio:</strong> data, hora, canal utilizado e se a
+        mensagem foi entregue com sucesso, para fins de auditoria e de suporte.</li>
+      <li><strong>E-mail e telefone, apenas quando você digita voluntariamente:</strong> algumas
+        conversas podem perguntar o seu e-mail ou o seu telefone. Esses dados só existem se você
+        escolher informá-los na conversa. Você nunca é obrigado a responder.</li>
+    </ul>
+
+    <div class="cartao">
+      <h3>O que nós não coletamos</h3>
+      <ul>
+        <li>Não coletamos e nunca pedimos a <strong>sua senha</strong> do Instagram ou de
+          qualquer outro serviço.</li>
+        <li>Não coletamos <strong>dados de pagamento</strong>, como cartão de crédito, chave Pix
+          ou dados bancários.</li>
+        <li>Não acessamos as <strong>suas conversas com outras pessoas</strong>. Enxergamos
+          somente as mensagens trocadas diretamente com o perfil @minichef.luna.</li>
+        <li>Não coletamos a sua lista de contatos, a sua localização, nem os seus dados de
+          navegação fora do Instagram.</li>
+        <li>Não registramos se você segue ou deixou de seguir o nosso perfil.</li>
+      </ul>
+    </div>
+
+    <h2 id="uso-dos-dados">3. Como e por que usamos os dados</h2>
+    <p>
+      Usamos os seus dados apenas para conversar com você e para manter esse atendimento
+      funcionando bem. A tabela abaixo relaciona cada finalidade com a base legal correspondente
+      na LGPD.
+    </p>
+
+    <div class="tabela-area">
+      <table>
+        <caption>Finalidades de tratamento e respectivas bases legais</caption>
+        <thead>
+          <tr>
+            <th scope="col">Para que usamos</th>
+            <th scope="col">Base legal na LGPD</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Responder ao seu comentário ou à sua mensagem e conduzir a conversa automática
+              que você iniciou</td>
+            <td>Consentimento, manifestado pela sua própria interação (art. 7º, inciso I)</td>
+          </tr>
+          <tr>
+            <td>Enviar o material, o link ou a informação que você pediu na conversa</td>
+            <td>Consentimento (art. 7º, inciso I) e execução de procedimento preliminar
+              relacionado a contrato, quando aplicável (art. 7º, inciso V)</td>
+          </tr>
+          <tr>
+            <td>Guardar registros de envio para auditoria, suporte e prevenção de abusos</td>
+            <td>Legítimo interesse (art. 7º, inciso IX)</td>
+          </tr>
+          <tr>
+            <td>Evitar mensagens repetidas e respeitar os limites da Plataforma da Meta</td>
+            <td>Legítimo interesse (art. 7º, inciso IX)</td>
+          </tr>
+          <tr>
+            <td>Cumprir obrigações legais e regulatórias e atender autoridades competentes</td>
+            <td>Cumprimento de obrigação legal (art. 7º, inciso II)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="cartao destaque">
+      <h3>Só falamos com quem falou primeiro</h3>
+      <p>
+        A automação responde exclusivamente a pessoas que interagiram conosco por vontade
+        própria, comentando em uma publicação ou enviando uma mensagem. <strong>Não enviamos
+        mensagens para quem nunca nos procurou</strong>, não compramos listas de contatos e não
+        fazemos disparo em massa. Além disso, a ferramenta envia no máximo uma mensagem
+        automática por pessoa a cada 24 horas em resposta a comentários.
+      </p>
+    </div>
+
+    <h2 id="compartilhamento">4. Compartilhamento e operadores</h2>
+    <p>
+      Não vendemos, não alugamos e não cedemos os seus dados pessoais. Também não utilizamos os
+      seus dados para marketing de terceiros. Compartilhamos informações apenas com as empresas
+      que fornecem a infraestrutura necessária para o atendimento funcionar, que atuam como
+      <strong>operadoras</strong> nos termos da LGPD:
+    </p>
+
+    <div class="tabela-area">
+      <table>
+        <caption>Operadores que participam do tratamento</caption>
+        <thead>
+          <tr>
+            <th scope="col">Empresa</th>
+            <th scope="col">Papel no tratamento</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Meta Platforms, Inc.</strong><br>(Instagram)</td>
+            <td>Fornece a plataforma e a API oficial por onde a conversa acontece. É a Meta que
+              nos informa o seu ID, o seu @ e o conteúdo da sua interação, e é por ela que as
+              nossas respostas são entregues a você.</td>
+          </tr>
+          <tr>
+            <td><strong>Supabase, Inc.</strong></td>
+            <td>Fornece o banco de dados e os serviços de aplicação onde as informações da
+              conversa ficam armazenadas de forma restrita. A instância utilizada está
+              localizada na região de São Paulo, no Brasil.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Além desses, podemos compartilhar dados quando houver <strong>obrigação legal</strong>,
+      ordem judicial ou requisição de autoridade competente.
+    </p>
+
+    <h2 id="transferencia-internacional">5. Transferência internacional de dados</h2>
+    <p>
+      O banco de dados que utilizamos está hospedado no <strong>Brasil</strong>, na região de São
+      Paulo. Ainda assim, parte do tratamento envolve transferência internacional, porque a
+      <strong>Meta Platforms, Inc.</strong> processa e armazena dados em servidores localizados
+      nos <strong>Estados Unidos</strong> e em outros países onde mantém operações. Essa
+      transferência é inerente ao uso do Instagram e está descrita na política de privacidade da
+      própria Meta, que você aceitou ao criar a sua conta.
+    </p>
+    <p>
+      A transferência ocorre com base no artigo 33 da LGPD, apoiada nas cláusulas contratuais e
+      nas garantias de proteção adotadas por essas empresas, e limitada ao que é necessário para
+      que a conversa chegue até você.
+    </p>
+
+    <h2 id="retencao">6. Retenção e exclusão dos dados</h2>
+    <p>
+      Guardamos os seus dados apenas enquanto eles forem necessários para o atendimento:
+    </p>
+    <ul>
+      <li><strong>Dados da conversa e de contato:</strong> mantidos enquanto durar o
+        relacionamento e excluídos após <strong>24 meses sem qualquer interação sua</strong> com
+        o nosso perfil.</li>
+      <li><strong>Registros técnicos de envio:</strong> mantidos pelo mesmo período, para fins de
+        auditoria e de comprovação de que as mensagens foram solicitadas.</li>
+      <li><strong>Pedido de exclusão:</strong> a qualquer momento você pode pedir a exclusão
+        antecipada, conforme a seção
+        <a href="#exclusao-de-dados">Como pedir a exclusão dos seus dados</a>.</li>
+    </ul>
+    <p>
+      Após esses prazos, os dados são apagados ou anonimizados, salvo quando a lei exigir que
+      sejam mantidos por mais tempo.
+    </p>
+
+    <h2 id="seguranca">7. Segurança</h2>
+    <p>
+      Adotamos medidas técnicas e administrativas razoáveis para proteger os seus dados contra
+      acesso não autorizado, perda e uso indevido:
+    </p>
+    <ul>
+      <li>Todo o tráfego acontece por <strong>conexão criptografada</strong> (HTTPS).</li>
+      <li>O banco de dados possui <strong>regras de acesso por linha</strong>, de modo que
+        somente a administradora autenticada consegue consultar as informações.</li>
+      <li>As credenciais de acesso à API ficam guardadas como <strong>segredos no servidor</strong>,
+        nunca no navegador nem no código público.</li>
+      <li>O acesso ao painel administrativo é <strong>restrito e protegido por senha</strong>.</li>
+    </ul>
+    <p>
+      Nenhum sistema é totalmente imune a incidentes. Caso ocorra um incidente de segurança
+      relevante que possa acarretar risco ou dano a você, comunicaremos os titulares afetados e a
+      Autoridade Nacional de Proteção de Dados, conforme o artigo 48 da LGPD.
+    </p>
+
+    <h2 id="direitos">8. Seus direitos pela LGPD</h2>
+    <p>
+      Você é o titular dos seus dados e, a qualquer momento, pode exercer os direitos previstos
+      no artigo 18 da LGPD:
+    </p>
+    <ul>
+      <li><strong>Confirmação e acesso:</strong> saber se tratamos dados seus e receber uma cópia
+        deles.</li>
+      <li><strong>Correção:</strong> pedir a correção de dados incompletos, inexatos ou
+        desatualizados.</li>
+      <li><strong>Anonimização, bloqueio ou eliminação:</strong> de dados desnecessários,
+        excessivos ou tratados em desconformidade com a lei.</li>
+      <li><strong>Portabilidade:</strong> solicitar a transferência dos seus dados a outro
+        fornecedor de serviço, conforme regulamentação da autoridade.</li>
+      <li><strong>Eliminação dos dados tratados com consentimento</strong>, nos termos da lei.</li>
+      <li><strong>Informação sobre compartilhamento:</strong> saber com quais entidades públicas
+        e privadas compartilhamos os seus dados.</li>
+      <li><strong>Revogação do consentimento:</strong> retirar o seu consentimento a qualquer
+        momento, de forma gratuita e facilitada.</li>
+      <li><strong>Oposição:</strong> opor-se a tratamento realizado com base em legítimo
+        interesse.</li>
+      <li><strong>Revisão de decisões automatizadas:</strong> solicitar revisão de decisões
+        tomadas unicamente por meio automatizado.</li>
+    </ul>
+    <p>
+      Para exercer qualquer um desses direitos, escreva para
+      <a href="mailto:contatominichefluna@gmail.com">contatominichefluna@gmail.com</a>.
+      Respondemos em até <strong>15 dias</strong> contados do recebimento do pedido.
+    </p>
+
+    <h2 id="exclusao-de-dados">9. Como pedir a exclusão dos seus dados</h2>
+    <div class="cartao destaque">
+      <p>
+        Você pode pedir a exclusão completa dos seus dados a qualquer momento, sem precisar
+        justificar o motivo e sem nenhum custo.
+      </p>
+      <h3>Pelo e-mail</h3>
+      <ol>
+        <li>Envie uma mensagem para
+          <a href="mailto:contatominichefluna@gmail.com?subject=Exclus%C3%A3o%20de%20dados">contatominichefluna@gmail.com</a>
+          com o assunto <strong>Exclusão de dados</strong>.</li>
+        <li>Informe o <strong>seu @ do Instagram</strong>, para que possamos localizar os seus
+          registros.</li>
+        <li>Se necessário, pediremos uma confirmação simples pelo direct do próprio perfil
+          @minichef.luna, apenas para garantir que o pedido partiu mesmo de você.</li>
+      </ol>
+      <h3>Pelo direct do Instagram</h3>
+      <p>
+        Você também pode enviar a palavra <strong>EXCLUIR</strong> em uma mensagem direta para
+        <strong>@minichef.luna</strong>. Trataremos essa mensagem como um pedido formal de
+        exclusão.
+      </p>
+      <h3>O que acontece depois</h3>
+      <p>
+        Apagamos os seus dados dos nossos sistemas em até <strong>15 dias</strong> e confirmamos a
+        exclusão pelo mesmo canal em que você pediu. Depois disso, a automação deixa de reconhecer
+        você, e uma nova interação sua será tratada como um primeiro contato.
+      </p>
+      <p>
+        Importante: os dados que ficam guardados dentro do próprio Instagram, como o histórico da
+        conversa no aplicativo, pertencem à sua conta e à Meta. Para apagá-los, use as opções do
+        próprio aplicativo ou a Central de Privacidade da Meta.
+      </p>
+    </div>
+
+    <h2 id="menores">10. Dados de menores</h2>
+    <p>
+      Esta automação é destinada exclusivamente a <strong>maiores de 18 anos</strong>, em linha
+      com os termos de uso do próprio Instagram. Não coletamos intencionalmente dados de crianças
+      nem de adolescentes. Se identificarmos que recebemos dados de um menor de idade sem o
+      consentimento específico e em destaque de ao menos um dos pais ou do responsável legal,
+      conforme o artigo 14 da LGPD, excluiremos esses dados assim que tomarmos conhecimento.
+      Se você é pai, mãe ou responsável e acredita que isso ocorreu, escreva para
+      <a href="mailto:contatominichefluna@gmail.com">contatominichefluna@gmail.com</a>.
+    </p>
+
+    <h2 id="alteracoes">11. Alterações nesta política</h2>
+    <p>
+      Podemos atualizar esta política para refletir mudanças na ferramenta, na legislação ou nas
+      exigências da Plataforma da Meta. Sempre que isso acontecer, publicaremos a nova versão
+      nesta mesma página e alteraremos a data de última atualização exibida no topo. Em caso de
+      mudança relevante na forma como tratamos os seus dados, informaremos pelos nossos canais
+      habituais. Recomendamos consultar esta página periodicamente.
+    </p>
+
+    <h2 id="contato">12. Contato</h2>
+    <div class="cartao">
+      <p><strong>Controladora:</strong> Ellen Mariane Santos Machado</p>
+      <p><strong>Perfil no Instagram:</strong> @minichef.luna</p>
+      <p><strong>Localização:</strong> Tatuí, São Paulo, Brasil</p>
+      <p>
+        <strong>E-mail para assuntos de privacidade:</strong>
+        <a href="mailto:contatominichefluna@gmail.com">contatominichefluna@gmail.com</a>
+      </p>
+      <p>
+        Esse é também o canal para exercer os seus direitos como titular e para falar com a pessoa
+        encarregada pelo tratamento dos dados.
+      </p>
+    </div>
+
+  </div>
+</main>
+
+<footer class="rodape">
+  <div class="envolucro">
+    <p>
+      Esta automação utiliza a Plataforma da Meta por meio da API oficial do Instagram e segue os
+      <a href="https://developers.facebook.com/terms/" rel="noopener noreferrer" target="_blank">Termos da Plataforma</a>
+      e as
+      <a href="https://developers.facebook.com/devpolicy/" rel="noopener noreferrer" target="_blank">Políticas do Desenvolvedor</a>
+      da Meta.
+    </p>
+    <p>
+      Este serviço não é patrocinado, endossado nem administrado pela Meta Platforms, Inc.
+      Instagram é uma marca registrada da Meta Platforms, Inc.
+    </p>
+    <p>&copy; 2026 Ellen Mariane Santos Machado. Todos os direitos reservados.</p>
+  </div>
+</footer>
+
+</body>
+</html>
