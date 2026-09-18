@@ -204,6 +204,36 @@ outra conta.
 
 ---
 
+## Busca ativa: funcionar mesmo sem o Meta entregar eventos
+
+Enquanto o app não tem **acesso avançado** às permissões de comentários e mensagens
+(que só sai pela Análise do App no Meta), o Meta aceita o cadastro do webhook mas **não
+entrega evento nenhum**. É um bloqueio silencioso: nada chega e nada dá erro.
+
+Para o sistema funcionar mesmo assim, o robô `ig-scheduler`, que já roda a cada minuto,
+faz uma **busca ativa**:
+
+- lê os comentários novos dos posts das automações ativas (e dos 12 posts mais recentes,
+  quando alguma automação vale para todos os posts);
+- lê as respostas no direct de quem está no meio de uma conversa automática (toques nos
+  botões e dados digitados);
+- entrega tudo ao `instagram-webhook`, que processa exatamente como faria com um evento
+  do Meta.
+
+Consequências práticas:
+- a DM sai em **até 1 minuto** depois do comentário, não na hora;
+- uma automação só responde comentários feitos **depois que ela foi criada**, então
+  criar uma automação nova nunca dispara DM para quem comentou no passado;
+- quando o Meta aprovar o acesso avançado e começar a entregar, nada se repete: cada
+  comentário e cada mensagem são processados uma única vez.
+
+Para desligar a busca ativa, crie o segredo `POLLING_ENABLED` com o valor `false`.
+
+A função `ig-diagnostico` (protegida pelo `SCHED_SECRET`) mostra a conta conectada, os
+comentários reais de um post (`?media_id=`) e as conversas recentes (`&conversas=1`).
+
+---
+
 ## Passo 8: publicar o frontend
 
 1. Abra `assets/config.js` e preencha `SUPABASE_URL` e `SUPABASE_ANON_KEY`

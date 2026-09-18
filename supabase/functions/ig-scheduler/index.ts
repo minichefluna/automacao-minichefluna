@@ -25,13 +25,39 @@ const BUDGET_KEY = "private_reply";
 // O Instagram só aceita resposta privada a um comentário por cerca de 7 dias.
 const VALIDADE_COMENTARIO_MS = 7 * 24 * 60 * 60 * 1000;
 
+// ---------- BUSCA ATIVA ----------
+// Enquanto o app não tem acesso avançado no Meta, o Meta não entrega os eventos
+// ao webhook. Então o próprio robô, a cada minuto, busca os comentários novos e
+// as respostas no direct e entrega ao webhook, que processa exatamente igual.
+// Quando o Meta começar a entregar, nada se repete: cada comentário e cada
+// mensagem são processados uma única vez (tabela ig_processed).
+// Para desligar, crie o segredo POLLING_ENABLED com o valor "false".
+const POLLING = (Deno.env.get("POLLING_ENABLED") ?? "true") !== "false";
+const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/instagram-webhook`;
+// Quantos posts recentes olhar quando alguma automação vale para "todos os posts".
+const POSTS_RECENTES = 12;
+// Só olha comentários e mensagens das últimas 48 horas.
+const JANELA_BUSCA_MS = 48 * 60 * 60 * 1000;
+
 Deno.serve(async (req) => {
   // Porteiro: só entra quem tem o segredo.
   if (req.headers.get("x-sched-key") !== SCHED_SECRET || !SCHED_SECRET) {
     return new Response("não autorizado", { status: 401 });
   }
 
-  const resumo = { fila_enviados: 0, fila_expirados: 0, atrasados_enviados: 0 };
+  const resumo = {
+    comentarios_novos: 0, mensagens_novas: 0,
+    fila_enviados: 0, fila_expirados: 0, atrasados_enviados: 0,
+    erros_busca: [] as string[],
+  };
+
+  // ---------- 0) BUSCA ATIVA ----------
+  if (POLLING && IG_TOKEN && IG_ACCOUNT_ID) {
+    try { await buscarComentarios(resumo); }
+    catch (e) { resumo.erros_busca.push(`comentarios: ${e}`); }
+    try { await buscarConversas(resumo); }
+    catch (e) { resumo.erros_busca.push(`conversas: ${e}`); }
+  }
 
   // ---------- 1) A FILA ----------
   const { data: pendentes } = await db.from("ig_send_queue")
@@ -109,6 +135,152 @@ Deno.serve(async (req) => {
 });
 
 // =============================================================
+// BUSCA ATIVA: comentários novos
+// =============================================================
+async function buscarComentarios(resumo: any) {
+  const { data: autos } = await db.from("ig_automations")
+    .select("id, media_ids, created_at").eq("active", true);
+  if (!autos?.length) return;
+
+  // Quais posts olhar: os escolhidos nas automações, mais os recentes
+  // quando alguma automação vale para todos os posts.
+  const posts = new Set<string>();
+  let todos = false;
+  for (const a of autos) {
+    const m: string[] = a.media_ids ?? [];
+    if (m.length === 0) todos = true;
+    else m.forEach((x) => posts.add(String(x)));
+  }
+  if (todos) {
+    const j = await igGet(`/me/media?fields=id&limit=${POSTS_RECENTES}`);
+    if (j?.error) resumo.erros_busca.push(`media: ${j.error.message}`);
+    (j?.data ?? []).forEach((m: any) => posts.add(String(m.id)));
+  }
+
+  // Nada anterior à automação mais antiga, nem fora da janela de busca.
+  const corte = Math.max(
+    Date.now() - JANELA_BUSCA_MS,
+    Math.min(...autos.map((a: any) => new Date(a.created_at).getTime())),
+  );
+
+  for (const mediaId of posts) {
+    const j = await igGet(`/${mediaId}/comments?fields=id,text,timestamp,from&limit=50`);
+    if (j?.error) { resumo.erros_busca.push(`post ${mediaId}: ${j.error.message}`); continue; }
+
+    const candidatos = (j?.data ?? []).filter((c: any) =>
+      c?.id && c?.from?.id &&
+      String(c.from.id) !== IG_ACCOUNT_ID &&
+      paraData(c.timestamp).getTime() >= corte
+    );
+    if (!candidatos.length) continue;
+
+    // Descarta o que já foi processado (pela busca ou pelo webhook do Meta).
+    const { data: ja } = await db.from("ig_processed")
+      .select("event_id").in("event_id", candidatos.map((c: any) => `c:${c.id}`));
+    const vistos = new Set((ja ?? []).map((x: any) => x.event_id));
+
+    for (const c of candidatos) {
+      if (vistos.has(`c:${c.id}`)) continue;
+      await encaminhar({
+        object: "instagram",
+        entry: [{
+          id: IG_ACCOUNT_ID,
+          time: Math.floor(Date.now() / 1000),
+          changes: [{
+            field: "comments",
+            value: {
+              id: String(c.id),
+              text: c.text ?? "",
+              timestamp: c.timestamp,
+              from: { id: String(c.from.id), username: c.from.username ?? "" },
+              media: { id: mediaId },
+            },
+          }],
+        }],
+      });
+      resumo.comentarios_novos++;
+    }
+  }
+}
+
+// =============================================================
+// BUSCA ATIVA: respostas no direct (toques nos botões e dados digitados)
+// =============================================================
+async function buscarConversas(resumo: any) {
+  // Só interessa quem está no meio de uma conversa automática recente.
+  const desde = new Date(Date.now() - JANELA_BUSCA_MS).toISOString();
+  const { data: leads } = await db.from("ig_leads")
+    .select("ig_user_id, updated_at, flow_step, automation_id")
+    .not("automation_id", "is", null)
+    .gte("updated_at", desde);
+  if (!leads?.length) return;
+  const porId = new Map(leads.map((l: any) => [String(l.ig_user_id), l]));
+
+  const j = await igGet(
+    `/me/conversations?platform=instagram&fields=participants,updated_time,messages.limit(6){id,message,from,created_time}&limit=25`,
+  );
+  if (j?.error) { resumo.erros_busca.push(`conversas: ${j.error.message}`); return; }
+
+  for (const conversa of j?.data ?? []) {
+    const outro = (conversa?.participants?.data ?? [])
+      .find((p: any) => String(p.id) !== IG_ACCOUNT_ID);
+    const lead: any = outro ? porId.get(String(outro.id)) : null;
+    if (!lead) continue;
+
+    // Mensagens da pessoa, depois do último passo que o sistema mandou pra ela.
+    const corte = new Date(lead.updated_at).getTime();
+    const novas = (conversa?.messages?.data ?? [])
+      .filter((m: any) =>
+        String(m?.from?.id) === String(outro.id) &&
+        String(m?.message ?? "").trim() !== "" &&
+        paraData(m.created_time).getTime() > corte
+      )
+      .sort((a: any, b: any) => paraData(a.created_time).getTime() - paraData(b.created_time).getTime());
+    if (!novas.length) continue;
+
+    const { data: ja } = await db.from("ig_processed")
+      .select("event_id").in("event_id", novas.map((m: any) => `m:${m.id}`));
+    const vistos = new Set((ja ?? []).map((x: any) => x.event_id));
+
+    for (const m of novas) {
+      if (vistos.has(`m:${m.id}`)) continue;
+      await encaminhar({
+        object: "instagram",
+        entry: [{
+          id: IG_ACCOUNT_ID,
+          time: Math.floor(Date.now() / 1000),
+          messaging: [{
+            sender: { id: String(outro.id) },
+            recipient: { id: IG_ACCOUNT_ID },
+            timestamp: paraData(m.created_time).getTime(),
+            message: { mid: String(m.id), text: String(m.message) },
+          }],
+        }],
+      });
+      resumo.mensagens_novas++;
+    }
+  }
+}
+
+// Entrega um evento ao webhook, identificado como interno pelo segredo.
+async function encaminhar(evento: unknown) {
+  await fetch(WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-sched-key": SCHED_SECRET },
+    body: JSON.stringify(evento),
+  });
+}
+
+async function igGet(caminho: string) {
+  try {
+    const r = await fetch(`${GRAPH}${caminho}`, { headers: { Authorization: `Bearer ${IG_TOKEN}` } });
+    return await r.json();
+  } catch (e) {
+    return { error: { message: String(e) } };
+  }
+}
+
+// =============================================================
 // Mesma lógica de envio do webhook (botões anexados, com fallback).
 // =============================================================
 async function sendStep(
@@ -179,4 +351,10 @@ async function log(u: string, a: string | null, canal: string, tipo: string, sta
   await db.from("ig_deliveries").insert({
     ig_user_id: u, automation_id: a, canal, tipo, status, motivo: String(motivo).slice(0, 500),
   });
+}
+
+// O Instagram manda datas como "2026-09-18T23:33:59+0000" (sem os dois-pontos
+// no fuso). Normaliza para o formato padrão antes de converter.
+function paraData(s: string) {
+  return new Date(String(s ?? "").replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
 }

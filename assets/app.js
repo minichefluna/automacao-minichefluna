@@ -1216,8 +1216,27 @@ async function salvarAutomacao() {
   if (ed.temBotao && !ed.btnTitle.trim()) problemas.push("Dê um nome pro botão.");
   if (ed.temBotao && ed.btnTitle.length > 20) problemas.push("O nome do botão passa de 20 caracteres.");
   if (ed.temBotao && ed.modo === "link" && !ed.link.trim()) problemas.push("Cole o link completo no campo do link.");
+  if (ed.temBotao && ed.modo === "link" && ed.link.trim() && !/^https?:\/\//i.test(ed.link.trim())) {
+    problemas.push("O link precisa começar com https:// (ou http://).");
+  }
   if (ed.temBotao && ed.modo === "conversa" && ed.passos.length === 0) {
     problemas.push("Adicione pelo menos a Mensagem 2 pra conversa continuar.");
+  }
+  // As mensagens da sequência e os botões delas também são conferidos.
+  if (ed.temBotao && ed.modo === "conversa") {
+    ed.passos.forEach((p, i) => {
+      const n = i + 2;
+      if (!String(p.message ?? "").trim()) problemas.push(`Escreva o texto da Mensagem ${n}.`);
+      (p.buttons ?? []).forEach((b) => {
+        const nome = String(b.title ?? "");
+        if (b.dest !== "fim" && !nome.trim()) problemas.push(`Dê um nome ao botão da Mensagem ${n}.`);
+        if (nome.length > 20) problemas.push(`O botão "${nome.slice(0, 20)}..." da Mensagem ${n} passa de 20 caracteres.`);
+        if (b.dest === "link" && !String(b.url ?? "").trim()) problemas.push(`Um botão da Mensagem ${n} abre um link, mas o link está vazio.`);
+        if (b.dest === "link" && String(b.url ?? "").trim() && !/^https?:\/\//i.test(String(b.url).trim())) {
+          problemas.push(`O link de um botão da Mensagem ${n} precisa começar com https://.`);
+        }
+      });
+    });
   }
   if (problemas.length) { alert("Falta pouco:\n\n" + problemas.map((p) => "• " + p).join("\n")); return; }
 

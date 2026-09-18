@@ -25,6 +25,9 @@ const APP_SECRET = Deno.env.get("APP_SECRET") ?? "";
 const APP_SECRET_ENFORCE = (Deno.env.get("APP_SECRET_ENFORCE") ?? "false") === "true";
 const VERIFY_TOKEN = Deno.env.get("VERIFY_TOKEN") ?? "";
 const GRAPH_VERSION = Deno.env.get("GRAPH_API_VERSION") ?? "v21.0";
+// Segredo dos robôs internos. Eventos enviados pelo ig-scheduler (modo de busca ativa)
+// chegam com esse segredo e não passam pela conferência de assinatura do Meta.
+const SCHED_SECRET = Deno.env.get("SCHED_SECRET") ?? "";
 // Contas de teste: ids numéricos separados por vírgula. Elas ignoram a regra do 1 por dia.
 const TEST_ACCOUNTS = (Deno.env.get("TEST_IG_ACCOUNTS") ?? "")
   .split(",").map((s) => s.trim()).filter(Boolean);
@@ -59,7 +62,9 @@ Deno.serve(async (req) => {
   // ---------- b) RECEBIMENTO (POST) ----------
   // Lemos o corpo como TEXTO porque a assinatura é calculada sobre o texto cru.
   const raw = await req.text();
-  const assinaturaOk = await conferirAssinatura(raw, req.headers.get("x-hub-signature-256"));
+  // Evento interno do robô de busca ativa: já vem de dentro do sistema.
+  const interno = !!SCHED_SECRET && req.headers.get("x-sched-key") === SCHED_SECRET;
+  const assinaturaOk = interno || await conferirAssinatura(raw, req.headers.get("x-hub-signature-256"));
 
   if (!assinaturaOk) {
     if (APP_SECRET_ENFORCE) {
@@ -141,7 +146,11 @@ async function handleComment(v: any) {
   if (IG_ACCOUNT_ID && fromId === IG_ACCOUNT_ID) return;
 
   // 3) Acha a automação: casa a palavra E o post.
-  const automacao = await acharAutomacao(texto, mediaId);
+  // Quando o comentário traz a data (busca ativa), uma automação só vale para
+  // comentários feitos DEPOIS que ela foi criada. Assim uma automação nova
+  // nunca sai mandando DM para quem comentou semanas atrás.
+  const quando = v?.timestamp ? paraData(v.timestamp) : null;
+  const automacao = await acharAutomacao(texto, mediaId, quando);
   if (!automacao) return;
 
   // 4) Regra do 1 por dia (contas de teste passam direto).
@@ -162,12 +171,15 @@ async function handleComment(v: any) {
 }
 
 // Procura a automação ativa que casa com o texto do comentário e com o post.
-async function acharAutomacao(texto: string, mediaId: string) {
+async function acharAutomacao(texto: string, mediaId: string, quando: Date | null = null) {
   const { data } = await db.from("ig_automations").select("*").eq("active", true);
   const lista = data ?? [];
   const t = normalizar(texto);
 
   for (const a of lista) {
+    // Comentário mais antigo que a automação: não dispara.
+    if (quando && a.created_at && new Date(a.created_at) > quando) continue;
+
     // O post precisa bater (array vazio = vale pra todos os posts).
     const posts: string[] = a.media_ids ?? [];
     if (posts.length > 0 && mediaId && !posts.includes(mediaId)) continue;
@@ -398,12 +410,12 @@ async function handleMessage(evento: any) {
     return;
   }
 
-  // ---- Coleta de dado: o passo anterior pediu um email ou telefone ----
   const texto = String(evento?.message?.text ?? "").trim();
   if (texto) {
     const { data: lead } = await db.from("ig_leads")
       .select("*").eq("ig_user_id", remetente).maybeSingle();
 
+    // ---- Coleta de dado: o passo anterior pediu um email ou telefone ----
     if (lead?.expecting?.field) {
       const campo = String(lead.expecting.field);
       const valido = campo === "email"
@@ -430,6 +442,26 @@ async function handleMessage(evento: any) {
         await avancarFluxo(`STEP:${lead.automation_id}:${proximo}`, remetente);
       }
       return;
+    }
+
+    // ---- Toque em botão que chegou como TEXTO ----
+    // Na busca ativa (e em algumas versões do Instagram), o toque no botão aparece
+    // na conversa como uma mensagem com o nome do botão. Se o texto bate com um
+    // botão do passo em que a pessoa está, a conversa avança.
+    if (lead?.automation_id && lead?.flow_step) {
+      const { data: auto } = await db.from("ig_automations")
+        .select("*").eq("id", lead.automation_id).maybeSingle();
+      const passo = (auto?.flow?.steps ?? [])
+        .find((p: any) => String(p.id) === String(lead.flow_step));
+      const alvo = normalizar(texto);
+      const botao = (passo?.buttons ?? []).find((b: any) =>
+        b?.next !== undefined && b?.next !== null && b?.next !== "" &&
+        normalizar(String(b?.title ?? "")) === alvo
+      );
+      if (auto?.active && botao) {
+        await avancarFluxo(`STEP:${auto.id}:${botao.next}`, remetente);
+        return;
+      }
     }
   }
 
@@ -504,4 +536,10 @@ async function log(
     automation_id: automationId,
     canal, tipo, status, motivo: motivo.slice(0, 500),
   });
+}
+
+// O Instagram manda datas como "2026-09-18T23:33:59+0000" (sem os dois-pontos
+// no fuso). Normaliza para o formato padrão antes de converter.
+function paraData(s: string) {
+  return new Date(String(s ?? "").replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
 }
