@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
     }
     if (url.searchParams.get("conversas")) {
       out.conversas = await pegar(
-        `${IG}/me/conversations?platform=instagram&fields=id,updated_time,participants,messages.limit(10){id,message,from,created_time,story}&limit=25`,
+        `${IG}/me/conversations?platform=instagram${url.searchParams.get("folder") ? `&folder=${url.searchParams.get("folder")}` : ""}&fields=id,updated_time,participants,messages.limit(10){id,message,from,created_time,story}&limit=25`,
       );
     }
     return json(out);

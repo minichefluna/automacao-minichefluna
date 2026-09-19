@@ -8,6 +8,9 @@
 //   1. Esvazia a fila (ig_send_queue): os envios que o freio segurou.
 //   2. Manda os passos com atraso (ig_scheduled) que já venceram.
 //
+// A cada 10 segundos, enquanto houver automação ligada (?so=entradas):
+//   Comentários novos e respostas a stories, para a primeira DM sair em segundos.
+//
 // A cada 5 segundos, MAS SÓ enquanto alguém está no meio de uma conversa
 // (chamada com ?so=conversas):
 //   Olha o direct de quem acabou de receber uma mensagem com botão, para a
@@ -61,20 +64,30 @@ Deno.serve(async (req) => {
     erros_busca: [] as string[],
   };
 
-  // ---------- MODO STORIES: respostas a stories (a cada 20 segundos) ----------
-  if (so === "stories") {
+  // ---------- MODO ENTRADAS: comentários e respostas a stories (a cada 10 segundos) ----------
+  // É o que faz a primeira DM sair poucos segundos depois do comentário ou da
+  // resposta ao story. ("stories" continua aceito, por compatibilidade.)
+  if (so === "entradas" || so === "stories") {
     if (POLLING && IG_TOKEN && IG_ACCOUNT_ID) {
+      if (await buscaPausada()) {
+        resumo.erros_busca.push("busca rápida pausada: limite de uso do Instagram");
+        return responder(resumo);
+      }
+      try { await buscarComentarios(resumo); }
+      catch (e) { resumo.erros_busca.push(`comentarios: ${e}`); }
       try { await buscarRespostasStory(resumo); }
       catch (e) { resumo.erros_busca.push(`stories: ${e}`); }
+      await conferirLimite(resumo);
     }
     return responder(resumo);
   }
 
   // ---------- MODO RÁPIDO: só o direct de quem está no meio de uma conversa ----------
   if (soConversas) {
-    if (POLLING && IG_TOKEN && IG_ACCOUNT_ID) {
+    if (POLLING && IG_TOKEN && IG_ACCOUNT_ID && !(await buscaPausada())) {
       try { await buscarConversas(resumo, true); }
       catch (e) { resumo.erros_busca.push(`conversas: ${e}`); }
+      await conferirLimite(resumo);
     }
     return responder(resumo);
   }
@@ -173,6 +186,27 @@ Deno.serve(async (req) => {
 
 function responder(resumo: unknown) {
   return new Response(JSON.stringify(resumo), { headers: { "Content-Type": "application/json" } });
+}
+
+// ---------- Proteção contra o limite de uso da API do Instagram ----------
+// Se o Instagram responder que o limite foi atingido, a busca rápida para por
+// 10 minutos (a rodada de 1 minuto continua). Assim a conta nunca é penalizada.
+const CODIGOS_LIMITE = ["(#4)", "(#17)", "(#32)", "(#613)", "rate limit", "request limit", "too many calls"];
+
+async function buscaPausada() {
+  const { data } = await db.from("ig_send_budget").select("paused_until").eq("id", "busca").maybeSingle();
+  return !!data?.paused_until && new Date(data.paused_until).getTime() > Date.now();
+}
+
+async function conferirLimite(resumo: any) {
+  const bateuLimite = (resumo.erros_busca ?? []).some((e: string) =>
+    CODIGOS_LIMITE.some((c) => e.toLowerCase().includes(c.toLowerCase()))
+  );
+  if (!bateuLimite) return;
+  await db.from("ig_send_budget").upsert({
+    id: "busca", paused_until: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    updated_at: new Date().toISOString(),
+  });
 }
 
 // =============================================================
@@ -320,7 +354,10 @@ async function buscarConversas(resumo: any, rapido: boolean) {
     if (!lead) continue;
 
     // Mensagens da pessoa, depois do último passo que o sistema mandou pra ela.
-    const corte = new Date(lead.ultimo_envio ?? lead.updated_at).getTime();
+    // Margem de 2 minutos: se a pessoa está em duas conversas (post e story), um toque
+    // feito pouco antes do último envio da outra conversa não se perde. O que já foi
+    // processado nunca é processado de novo (ig_processed).
+    const corte = new Date(lead.ultimo_envio ?? lead.updated_at).getTime() - 2 * 60 * 1000;
     const novas = (conversa?.messages?.data ?? [])
       .filter((m: any) =>
         String(m?.from?.id) === String(outro.id) &&
@@ -359,7 +396,7 @@ async function buscarRespostasStory(resumo: any) {
   );
 
   const j = await igGet(
-    `/me/conversations?platform=instagram&fields=participants,messages.limit(5){id,message,from,created_time,story}&limit=25`,
+    `/me/conversations?platform=instagram&fields=participants,messages.limit(10){id,message,from,created_time,story}&limit=25`,
   );
   if (j?.error) { resumo.erros_busca.push(`stories: ${j.error.message}`); return; }
 

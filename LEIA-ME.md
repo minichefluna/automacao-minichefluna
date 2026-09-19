@@ -240,8 +240,15 @@ alguém responde um story seu, pelo direct, com uma das palavras (ou com qualque
 inclusive os que você postar depois. Como a resposta da pessoa já abre a conversa, a Mensagem
 1 sai direto no direct, e não existe resposta pública.
 
-O robô `ig_story_20s` olha o direct a cada 20 segundos, mas só enquanto houver alguma
-automação de story ligada. Rode o `sql/06_interacoes_e_stories.sql` para criá-lo.
+O robô `ig_entradas_10s` busca comentários novos e respostas a stories a cada 10 segundos,
+enquanto houver alguma automação ligada, então a primeira DM sai em segundos tanto no feed
+quanto no story. Rode o `sql/07_entradas_rapidas.sql` para criá-lo (ele substitui o robô de
+stories do arquivo 06). Se o Instagram avisar que o limite de uso da API foi atingido, a busca
+rápida pausa sozinha por 10 minutos, e a rodada de cada minuto continua.
+
+A regra das 24 horas vale **por automação**: quem comenta num post e responde um story
+recebe as duas mensagens, mas nunca recebe a mesma automação duas vezes no mesmo dia. Se a
+pessoa estiver em duas conversas ao mesmo tempo, os botões das duas continuam funcionando.
 
 ### Aba Interações
 

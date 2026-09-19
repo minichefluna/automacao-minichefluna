@@ -192,7 +192,7 @@ async function handleComment(v: any) {
 
   // 4) Regra do 1 por dia (contas de teste passam direto).
   const ehTeste = TEST_ACCOUNTS.includes(fromId);
-  if (!ehTeste && await recebeuNasUltimas24h(fromId)) {
+  if (!ehTeste && await recebeuNasUltimas24h(fromId, automacao.id)) {
     await log(fromId, automacao.id, "private_reply", "flow", "erro", "regra do 1 por dia");
     return;
   }
@@ -223,7 +223,7 @@ async function handleStoryReply(
   await registrarInteracao(remetente, "", "story_reply", storyId, true);
 
   // Regra do 1 por dia (contas de teste passam direto).
-  if (!TEST_ACCOUNTS.includes(remetente) && await recebeuNasUltimas24h(remetente)) {
+  if (!TEST_ACCOUNTS.includes(remetente) && await recebeuNasUltimas24h(remetente, automacao.id)) {
     await log(remetente, automacao.id, "dm", "flow", "erro", "regra do 1 por dia");
     return true;
   }
@@ -307,12 +307,26 @@ function normalizar(s: string) {
   return (s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
 }
 
-// Essa pessoa já recebeu uma DM nossa nas últimas 24 horas?
-async function recebeuNasUltimas24h(igUserId: string) {
+// Essa pessoa já recebeu ESTA automação nas últimas 24 horas?
+// A regra vale por automação: quem comenta num post e responde um story recebe
+// as duas mensagens, mas nunca recebe a mesma automação duas vezes no mesmo dia.
+async function recebeuNasUltimas24h(igUserId: string, automationId: string) {
   const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data } = await db.from("ig_deliveries")
-    .select("id").eq("ig_user_id", igUserId).eq("status", "ok").gte("ts", desde).limit(1);
+    .select("id").eq("ig_user_id", igUserId).eq("automation_id", automationId)
+    .eq("status", "ok").gte("ts", desde).limit(1);
   return (data?.length ?? 0) > 0;
+}
+
+// A janela "de olho no direct" nunca encurta: se a pessoa está no meio de duas
+// conversas (um post e um story), fica valendo o prazo mais longo das duas.
+async function aguardandoMaisLongo(igUserId: string, novo: string | null) {
+  const { data } = await db.from("ig_leads")
+    .select("aguardando_ate").eq("ig_user_id", igUserId).maybeSingle();
+  const atual = data?.aguardando_ate ? new Date(data.aguardando_ate).getTime() : 0;
+  const proposto = novo ? new Date(novo).getTime() : 0;
+  const maior = Math.max(atual, proposto);
+  return maior > Date.now() ? new Date(maior).toISOString() : null;
 }
 
 // =============================================================
@@ -590,6 +604,25 @@ async function handleMessage(evento: any) {
         await avancarFluxo(`STEP:${auto.id}:${botao.next}`, remetente);
         return;
       }
+
+      // A pessoa pode estar em duas conversas ao mesmo tempo (um post e um story).
+      // Procura o botão nas outras automações que ela recebeu nas últimas 48 horas.
+      const desde = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+      const { data: recebidas } = await db.from("ig_deliveries")
+        .select("automation_id").eq("ig_user_id", remetente).eq("status", "ok")
+        .gte("ts", desde).order("ts", { ascending: false }).limit(50);
+      const outras = [...new Set((recebidas ?? []).map((r: any) => String(r.automation_id)))]
+        .filter((id) => id && id !== String(lead.automation_id));
+      for (const id of outras) {
+        const { data: outra } = await db.from("ig_automations")
+          .select("*").eq("id", id).eq("active", true).maybeSingle();
+        let b: any = null;
+        for (const p of outra?.flow?.steps ?? []) { b = avancaCom(p); if (b) break; }
+        if (outra && b) {
+          await avancarFluxo(`STEP:${outra.id}:${b.next}`, remetente);
+          return;
+        }
+      }
     }
   }
 
@@ -628,7 +661,7 @@ async function avancarFluxo(payload: string, igUserId: string) {
     // Se o passo pede um dado, anota o que estamos esperando.
     expecting: passo?.collect ?? null,
     // Se o passo tem botão que continua a conversa, fica de olho nas respostas.
-    aguardando_ate: aguardandoAte(passo),
+    aguardando_ate: await aguardandoMaisLongo(igUserId, aguardandoAte(passo)),
     ultimo_envio: new Date().toISOString(),
   }, { onConflict: "ig_user_id" });
 
@@ -669,7 +702,7 @@ async function salvarLead(
     flow_step: passos.length ? String(passos[0].id) : null,
     expecting: passos[0]?.collect ?? null,
     // A Mensagem 1 tem botão que continua a conversa? Então fica de olho no direct.
-    aguardando_ate: passos.length ? aguardandoAte(passos[0]) : null,
+    aguardando_ate: await aguardandoMaisLongo(igUserId, passos.length ? aguardandoAte(passos[0]) : null),
     ultimo_envio: new Date().toISOString(),
     tags,
   };
