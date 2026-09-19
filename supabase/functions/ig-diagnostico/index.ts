@@ -38,6 +38,31 @@ Deno.serve(async (req) => {
         `${IG}/${mediaId}/comments?fields=id,text,timestamp,username,from,replies{id,text,username,timestamp}&limit=20`,
       );
     }
+    // ?sonda=1: testa quais métricas de insights a API entrega para esta conta.
+    if (url.searchParams.get("sonda")) {
+      const agora = Math.floor(Date.now() / 1000);
+      const dia = 86400;
+      const um = `since=${agora - 2 * dia}&until=${agora - dia}`;
+      const trinta = `since=${agora - 30 * dia}&until=${agora}`;
+      const conta = "me";
+      out.serie_reach_seguidores = await pegar(`${IG}/${conta}/insights?metric=reach,follower_count&period=day&${trinta}`);
+      out.total_por_dia = await pegar(`${IG}/${conta}/insights?metric=accounts_engaged,total_interactions,likes,comments,shares,saves,replies,views,profile_links_taps,follows_and_unfollows&period=day&metric_type=total_value&${um}`);
+      out.alcance_seguidores = await pegar(`${IG}/${conta}/insights?metric=reach&period=day&metric_type=total_value&breakdown=follow_type&${trinta}`);
+      out.perfil = await pegar(`${IG}/${conta}?fields=followers_count,follows_count,media_count`);
+      const midias: any = await pegar(`${IG}/${conta}/media?fields=id,media_type,media_product_type,timestamp,like_count,comments_count&limit=4`);
+      out.midias = midias;
+      const lista = (midias?.data ?? []) as any[];
+      out.insights_midia = [];
+      for (const m of lista.slice(0, 3)) {
+        (out.insights_midia as any[]).push({
+          id: m.id, tipo: m.media_product_type,
+          completo: await pegar(`${IG}/${m.id}/insights?metric=reach,likes,comments,shares,saved,views,total_interactions,follows,profile_visits`),
+          basico: await pegar(`${IG}/${m.id}/insights?metric=reach,likes,comments,shares,saved,total_interactions`),
+          views: await pegar(`${IG}/${m.id}/insights?metric=views`),
+          follows: await pegar(`${IG}/${m.id}/insights?metric=follows`),
+        });
+      }
+    }
     if (url.searchParams.get("conversas")) {
       out.conversas = await pegar(
         `${IG}/me/conversations?platform=instagram${url.searchParams.get("folder") ? `&folder=${url.searchParams.get("folder")}` : ""}&fields=id,updated_time,participants,messages.limit(10){id,message,from,created_time,story}&limit=25`,

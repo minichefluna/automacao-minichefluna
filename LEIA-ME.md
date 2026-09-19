@@ -113,6 +113,8 @@ supabase functions deploy ig-token-refresh --no-verify-jwt
 supabase functions deploy ig-insights
 supabase functions deploy ig-media
 supabase functions deploy ig-subscribe --no-verify-jwt
+supabase functions deploy ig-analytics
+supabase functions deploy ig-link --no-verify-jwt
 ```
 
 > O `ig-scheduler` e o `ig-token-refresh` também precisam de `--no-verify-jwt`: quem
@@ -250,7 +252,34 @@ A regra das 24 horas vale **por automação**: quem comenta num post e responde 
 recebe as duas mensagens, mas nunca recebe a mesma automação duas vezes no mesmo dia. Se a
 pessoa estiver em duas conversas ao mesmo tempo, os botões das duas continuam funcionando.
 
-### Aba Interações
+### Central do Instagram (as cinco abas)
+
+Rode o `sql/08_central_instagram.sql` e publique as funções `ig-analytics` (com login) e
+`ig-link` (pública, `--no-verify-jwt`).
+
+- **📊 Visão geral:** filtro de período (7, 15, 30, 90 dias ou personalizado), 8 indicadores
+  com comparação ao período anterior, gráficos de crescimento, alcance (com seguidores x não
+  seguidores) e engajamento, melhores conteúdos, funil do lead, saúde das automações e
+  atividade recente.
+- **⚙️ Automações:** cartões com miniatura, gatilho, palavras, link, ligar/desligar e as
+  métricas de cada uma. Clique num cartão para ver o detalhe e o histórico de execução.
+- **👥 Leads:** a planilha completa, com filtros, o caminho de cada lead e exportação. Clique
+  numa linha para ver a linha do tempo da pessoa.
+- **💬 Interações:** todos os eventos (comentários, DMs, respostas, cliques, novos leads).
+- **📈 Análises:** taxas de entrega, resposta e clique, séries por dia, desempenho de cada
+  automação, palavras-chave, horários de pico, origem dos leads e conteúdos que mais geraram leads.
+
+O que o painel mostra e de onde vem:
+- **Métricas da conta e dos conteúdos:** da API do Instagram, guardadas em cache
+  (`ig_insights_diario`, `ig_media_insights`). O botão ↻ Atualizar busca de novo.
+- **Seguidores ganhos por dia:** o Instagram só informa os últimos 30 dias.
+- **Seguidores gerados por conteúdo:** só existe para posts do feed; Reels aparecem como n/d.
+- **DM entregue:** significa aceita pelo Instagram. Confirmação de leitura só com acesso avançado.
+- **Cliques:** o botão de link aponta para `ig-link`, que registra o clique e redireciona na
+  hora para o destino. Contam a partir desta versão; robôs de pré-visualização são ignorados.
+- **Conversão:** aparece como não disponível, porque o sistema não recebe dados de venda.
+
+### Aba Leads (antes chamada Interações)
 
 A planilha de todos os leads: nome, @, foto, origem (comentário ou story, com a miniatura do
 conteúdo), palavra, contato, etiquetas, automação, interações, mensagens enviadas, primeira e

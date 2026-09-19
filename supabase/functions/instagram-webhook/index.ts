@@ -187,13 +187,15 @@ async function handleComment(v: any) {
   const automacao = await acharAutomacao(texto, mediaId, quando);
   if (!automacao) return;
 
-  // Conta a interação na aba Interações (cria o lead, se for o primeiro contato).
-  await registrarInteracao(fromId, username, "comment", mediaId, true);
+  // Registra o comentário (com a palavra identificada) e conta a interação.
+  // Se for o primeiro contato da pessoa, ela vira lead aqui.
+  await registrarEvento("comentario", fromId, automacao.id, mediaId, texto, palavraCasada(automacao, texto));
+  await registrarInteracao(fromId, username, "comment", mediaId, true, automacao.id);
 
-  // 4) Regra do 1 por dia (contas de teste passam direto).
+  // 4) Regra do 1 por dia (contas de teste passam direto). Não é falha: é cancelamento.
   const ehTeste = TEST_ACCOUNTS.includes(fromId);
   if (!ehTeste && await recebeuNasUltimas24h(fromId, automacao.id)) {
-    await log(fromId, automacao.id, "private_reply", "flow", "erro", "regra do 1 por dia");
+    await log(fromId, automacao.id, "private_reply", "flow", "cancelado", "regra do 1 por dia");
     return;
   }
 
@@ -220,18 +222,19 @@ async function handleStoryReply(
   const automacao = await acharAutomacaoStory(texto, storyId, quando);
   if (!automacao) return false;
 
-  await registrarInteracao(remetente, "", "story_reply", storyId, true);
+  await registrarEvento("story_reply", remetente, automacao.id, storyId, texto, palavraCasada(automacao, texto));
+  await registrarInteracao(remetente, "", "story_reply", storyId, true, automacao.id);
 
-  // Regra do 1 por dia (contas de teste passam direto).
+  // Regra do 1 por dia (contas de teste passam direto). Não é falha: é cancelamento.
   if (!TEST_ACCOUNTS.includes(remetente) && await recebeuNasUltimas24h(remetente, automacao.id)) {
-    await log(remetente, automacao.id, "dm", "flow", "erro", "regra do 1 por dia");
+    await log(remetente, automacao.id, "dm", "flow", "cancelado", "regra do 1 por dia");
     return true;
   }
 
   const passos = automacao?.flow?.steps ?? [];
   if (!passos.length) return true;
 
-  const envio = await sendStep(automacao, passos[0], { id: remetente });
+  const envio = await sendStep(automacao, passos[0], { id: remetente }, remetente);
   await log(remetente, automacao.id, "dm", "flow", envio.ok ? "ok" : "erro",
     envio.ok ? "resposta ao story" : (envio.motivo ?? ""));
 
@@ -360,7 +363,7 @@ async function deliverAutomation(
   }
 
   // Manda o primeiro passo como RESPOSTA PRIVADA ao comentário.
-  const envio = await sendStep(automacao, primeiro, { comment_id: commentId });
+  const envio = await sendStep(automacao, primeiro, { comment_id: commentId }, igUserId);
 
   await db.rpc("record_send_result", {
     p_key: BUDGET_KEY, p_ok: envio.ok, p_hard: envio.hard ?? false,
@@ -386,6 +389,23 @@ export async function sendStep(
   automacao: any,
   passo: any,
   destino: { id?: string; comment_id?: string },
+  igUserId = "",
+): Promise<{ ok: boolean; hard?: boolean; motivo?: string }> {
+  const r = await enviarPasso(automacao, passo, destino, igUserId);
+  // Link entregue: registra, para o funil e a linha do tempo do lead.
+  if (r.ok && igUserId) {
+    for (const b of passo?.buttons ?? []) {
+      if (b?.url) await registrarEvento("link_enviado", igUserId, automacao.id, null, String(b.title ?? ""), String(b.url));
+    }
+  }
+  return r;
+}
+
+async function enviarPasso(
+  automacao: any,
+  passo: any,
+  destino: { id?: string; comment_id?: string },
+  igUserId: string,
 ): Promise<{ ok: boolean; hard?: boolean; motivo?: string }> {
   const texto = String(passo?.message ?? "").trim() || "Oi!";
 
@@ -396,7 +416,9 @@ export async function sendStep(
     const titulo = String(b?.title ?? "").slice(0, 20); // o Instagram corta em 20
     if (!titulo) continue;
     if (b?.url) {
-      botoes.push({ type: "web_url", url: String(b.url), title: titulo });
+      // O botão aponta para o link de rastreio, que conta o clique e redireciona.
+      const url = await linkRastreado(String(b.url), igUserId, automacao.id, passo?.id, titulo);
+      botoes.push({ type: "web_url", url, title: titulo });
     } else if (b?.next !== undefined && b?.next !== null && b?.next !== "") {
       // O payload carrega o id da automação, então duas automações com o
       // mesmo texto de botão nunca se misturam.
@@ -542,6 +564,8 @@ async function handleMessage(evento: any) {
     null;
 
   if (payload && String(payload).startsWith("STEP:")) {
+    const titulo = String(evento?.postback?.title ?? evento?.message?.text ?? "");
+    await registrarEvento("botao", remetente, String(payload).split(":")[1] ?? null, null, titulo, null);
     await avancarFluxo(String(payload), remetente);
     return;
   }
@@ -571,6 +595,7 @@ async function handleMessage(evento: any) {
       const atualizacao: any = { expecting: null };
       atualizacao[campo === "email" ? "email" : "telefone"] = texto;
       await db.from("ig_leads").update(atualizacao).eq("ig_user_id", remetente);
+      await registrarEvento("dado", remetente, lead.automation_id, null, texto, campo);
 
       // Segue pro próximo passo, se tiver.
       const proximo = lead.expecting.next;
@@ -601,6 +626,7 @@ async function handleMessage(evento: any) {
         for (const p of passos) { botao = avancaCom(p); if (botao) break; }
       }
       if (auto?.active && botao) {
+        await registrarEvento("botao", remetente, auto.id, null, String(botao.title ?? texto), null);
         await avancarFluxo(`STEP:${auto.id}:${botao.next}`, remetente);
         return;
       }
@@ -619,10 +645,16 @@ async function handleMessage(evento: any) {
         let b: any = null;
         for (const p of outra?.flow?.steps ?? []) { b = avancaCom(p); if (b) break; }
         if (outra && b) {
+          await registrarEvento("botao", remetente, outra.id, null, String(b.title ?? texto), null);
           await avancarFluxo(`STEP:${outra.id}:${b.next}`, remetente);
           return;
         }
       }
+    }
+
+    // Mensagem livre de quem já é lead: é uma resposta (fica na linha do tempo).
+    if (lead) {
+      await registrarEvento("resposta", remetente, lead.automation_id ?? null, null, texto.slice(0, 500), null);
     }
   }
 
@@ -648,7 +680,7 @@ async function avancarFluxo(payload: string, igUserId: string) {
 
   // Aqui a janela de 24h já está aberta (a pessoa acabou de tocar no botão),
   // então mandamos direto pela DM da conversa.
-  const envio = await sendStep(automacao, passo, { id: igUserId });
+  const envio = await sendStep(automacao, passo, { id: igUserId }, igUserId);
 
   await log(igUserId, automationId, "dm", "flow", envio.ok ? "ok" : "erro", envio.motivo ?? "");
 
@@ -714,13 +746,60 @@ async function salvarLead(
 }
 
 // Conta uma interação da pessoa (função no banco, contagem sem risco de corrida).
+// Se a pessoa ainda não era lead e criar = true, registra o evento "novo lead".
 async function registrarInteracao(
   igUserId: string, username: string, origem: string, mediaId: string, criar: boolean,
+  automationId: string | null = null,
 ) {
+  let novo = false;
+  if (criar) {
+    const { data } = await db.from("ig_leads").select("ig_user_id").eq("ig_user_id", igUserId).maybeSingle();
+    novo = !data;
+  }
   const { error } = await db.rpc("registrar_interacao", {
     p_user: igUserId, p_username: username, p_origem: origem, p_media: mediaId, p_criar: criar,
   });
   if (error) console.warn("Não deu pra registrar a interação:", error.message);
+  if (novo) await registrarEvento("novo_lead", igUserId, automationId, mediaId || null, null, origem);
+}
+
+// Registra um acontecimento na linha do tempo (base das abas Interações e Leads,
+// do funil e da atividade recente). Falhar aqui nunca impede a DM de sair.
+async function registrarEvento(
+  tipo: string, igUserId: string, automationId: string | null,
+  mediaId: string | null, texto: string | null, detalhe: string | null,
+) {
+  try {
+    await db.from("ig_events").insert({
+      tipo, ig_user_id: igUserId || null, automation_id: automationId || null,
+      media_id: mediaId || null, texto: texto ? String(texto).slice(0, 500) : null,
+      detalhe: detalhe ? String(detalhe).slice(0, 500) : null,
+    });
+  } catch (e) {
+    console.warn("Não deu pra registrar o evento:", e);
+  }
+}
+
+// Qual palavra da automação apareceu no texto (para "palavra-chave identificada").
+function palavraCasada(automacao: any, texto: string) {
+  if (automacao?.match_any) return "qualquer palavra";
+  const t = normalizar(texto);
+  const palavras = String(automacao?.keyword ?? "").split(",").map((p: string) => p.trim()).filter(Boolean);
+  return palavras.find((p: string) => t.includes(normalizar(p))) ?? null;
+}
+
+// Link rastreado: o botão aponta para a função ig-link, que registra o clique e
+// redireciona na hora para o destino. Se algo falhar, usa o link original.
+async function linkRastreado(
+  url: string, igUserId: string, automationId: string, stepId: unknown, titulo: string,
+) {
+  if (!igUserId || !/^https?:\/\//i.test(url)) return url;
+  const codigo = crypto.randomUUID().replace(/-/g, "").slice(0, 14);
+  const { error } = await db.from("ig_links").insert({
+    codigo, ig_user_id: igUserId, automation_id: automationId,
+    step_id: String(stepId ?? ""), titulo, url,
+  });
+  return error ? url : `${SUPABASE_URL}/functions/v1/ig-link?c=${codigo}`;
 }
 
 // Busca nome, @ e foto de perfil de quem interagiu (API de perfil do Instagram).

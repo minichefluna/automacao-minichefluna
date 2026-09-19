@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
     }
 
     // Manda o passo 0 (a Mensagem 1) como resposta privada ao comentário.
-    const envio = await sendStep(automacao, passos[0], { comment_id: item.comment_id });
+    const envio = await sendStep(automacao, passos[0], { comment_id: item.comment_id }, item.ig_user_id);
     await db.rpc("record_send_result", { p_key: BUDGET_KEY, p_ok: envio.ok, p_hard: envio.hard ?? false });
 
     if (envio.ok) {
@@ -166,7 +166,7 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    const envio = await sendStep(automacao, passo, { id: s.ig_user_id });
+    const envio = await sendStep(automacao, passo, { id: s.ig_user_id }, s.ig_user_id);
     await db.from("ig_scheduled").update({ sent: true }).eq("id", s.id);
     await log(s.ig_user_id, s.automation_id, "dm", "flow", envio.ok ? "ok" : "erro", envio.motivo ?? "");
     if (envio.ok) {
@@ -495,7 +495,35 @@ function aguardandoAte(passo: any) {
 // Mesma lógica de envio do webhook (botões anexados, com fallback).
 // =============================================================
 async function sendStep(
-  automacao: any, passo: any, destino: { id?: string; comment_id?: string },
+  automacao: any, passo: any, destino: { id?: string; comment_id?: string }, igUserId = "",
+): Promise<{ ok: boolean; hard?: boolean; motivo?: string }> {
+  const r = await enviarPasso(automacao, passo, destino, igUserId);
+  // Link entregue: registra, para o funil e a linha do tempo do lead.
+  if (r.ok && igUserId) {
+    for (const b of passo?.buttons ?? []) {
+      if (b?.url) {
+        await db.from("ig_events").insert({
+          tipo: "link_enviado", ig_user_id: igUserId, automation_id: automacao.id,
+          texto: String(b.title ?? "").slice(0, 500), detalhe: String(b.url).slice(0, 500),
+        });
+      }
+    }
+  }
+  return r;
+}
+
+// Link rastreado (mesma lógica do webhook): conta o clique e redireciona.
+async function linkRastreado(url: string, igUserId: string, automationId: string, stepId: unknown, titulo: string) {
+  if (!igUserId || !/^https?:\/\//i.test(url)) return url;
+  const codigo = crypto.randomUUID().replace(/-/g, "").slice(0, 14);
+  const { error } = await db.from("ig_links").insert({
+    codigo, ig_user_id: igUserId, automation_id: automationId, step_id: String(stepId ?? ""), titulo, url,
+  });
+  return error ? url : `${SUPABASE_URL}/functions/v1/ig-link?c=${codigo}`;
+}
+
+async function enviarPasso(
+  automacao: any, passo: any, destino: { id?: string; comment_id?: string }, igUserId: string,
 ): Promise<{ ok: boolean; hard?: boolean; motivo?: string }> {
   const texto = String(passo?.message ?? "").trim() || "Oi!";
 
@@ -503,7 +531,10 @@ async function sendStep(
   for (const b of passo?.buttons ?? []) {
     const titulo = String(b?.title ?? "").slice(0, 20);
     if (!titulo) continue;
-    if (b?.url) botoes.push({ type: "web_url", url: String(b.url), title: titulo });
+    if (b?.url) {
+      const url = await linkRastreado(String(b.url), igUserId, automacao.id, passo?.id, titulo);
+      botoes.push({ type: "web_url", url, title: titulo });
+    }
     else if (b?.next !== undefined && b?.next !== null && b?.next !== "") {
       botoes.push({ type: "postback", title: titulo, payload: `STEP:${automacao.id}:${b.next}` });
     }
