@@ -17,9 +17,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // ---------- Segredos (variáveis de ambiente) ----------
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const IG_TOKEN = Deno.env.get("IG_ACCESS_TOKEN") ?? "";
+// O token do Instagram é renovado toda semana pelo ig-token-refresh, que guarda o
+// token novo na tabela ig_secrets. Aqui usamos o do banco e, se não houver, o do segredo.
+let IG_TOKEN = Deno.env.get("IG_ACCESS_TOKEN") ?? "";
 const IG_ACCOUNT_ID = Deno.env.get("IG_ACCOUNT_ID") ?? "";
 const APP_SECRET = Deno.env.get("APP_SECRET") ?? "";
+// Chave secreta do app (tela Básico). O Meta pode assinar com ela ou com a do Instagram.
+const META_APP_SECRET = Deno.env.get("META_APP_SECRET") ?? "";
 // "false" (padrão) = modo teste, assinatura inválida só vira aviso no log.
 // "true" = trava ligada, assinatura inválida é recusada. Ligue depois de testar.
 const APP_SECRET_ENFORCE = (Deno.env.get("APP_SECRET_ENFORCE") ?? "false") === "true";
@@ -37,6 +41,30 @@ const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: fal
 
 // Chave do freio (o contador da tabela ig_send_budget).
 const BUDGET_KEY = "private_reply";
+
+// Depois de mandar uma mensagem com botão que continua a conversa, o sistema fica
+// "de olho" no direct dessa pessoa por este tempo, checando a cada poucos segundos.
+// É isso que faz a segunda mensagem chegar logo depois do toque no botão.
+const JANELA_RAPIDA_MS = 5 * 60 * 1000;
+
+// Lê o token mais recente (renovado) do banco.
+async function carregarToken() {
+  try {
+    const { data } = await db.from("ig_secrets").select("value").eq("id", "ig_access_token").maybeSingle();
+    if (data?.value) IG_TOKEN = String(data.value);
+  } catch { /* sem a tabela, segue com o token do segredo */ }
+}
+
+// Esse passo espera uma resposta da pessoa (botão que avança ou pedido de dado)?
+function esperaResposta(passo: any) {
+  const avanca = (passo?.buttons ?? []).some((b: any) =>
+    !b?.url && b?.next !== undefined && b?.next !== null && b?.next !== ""
+  );
+  return avanca || !!passo?.collect;
+}
+function aguardandoAte(passo: any) {
+  return esperaResposta(passo) ? new Date(Date.now() + JANELA_RAPIDA_MS).toISOString() : null;
+}
 
 // =============================================================
 // PONTO DE ENTRADA
@@ -77,6 +105,8 @@ Deno.serve(async (req) => {
   let body: any = {};
   try { body = JSON.parse(raw); } catch { body = {}; }
 
+  await carregarToken();
+
   // Respondemos 200 rápido e processamos em seguida: o Meta não gosta de espera.
   try {
     for (const entry of body?.entry ?? []) {
@@ -102,19 +132,23 @@ Deno.serve(async (req) => {
 // ASSINATURA (HMAC SHA-256 com o APP_SECRET)
 // =============================================================
 async function conferirAssinatura(raw: string, header: string | null): Promise<boolean> {
-  if (!APP_SECRET || !header) return false;
+  if (!header) return false;
   const esperado = header.replace("sha256=", "").trim();
-  const chave = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(APP_SECRET),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const assinado = await crypto.subtle.sign("HMAC", chave, new TextEncoder().encode(raw));
-  const calculado = [...new Uint8Array(assinado)]
-    .map((b) => b.toString(16).padStart(2, "0")).join("");
-  return calculado === esperado;
+  // Aceita a assinatura feita com qualquer um dos dois segredos do app.
+  for (const segredo of [APP_SECRET, META_APP_SECRET].filter(Boolean)) {
+    const chave = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(segredo),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const assinado = await crypto.subtle.sign("HMAC", chave, new TextEncoder().encode(raw));
+    const calculado = [...new Uint8Array(assinado)]
+      .map((b) => b.toString(16).padStart(2, "0")).join("");
+    if (calculado === esperado) return true;
+  }
+  return false;
 }
 
 // =============================================================
@@ -175,23 +209,35 @@ async function acharAutomacao(texto: string, mediaId: string, quando: Date | nul
   const { data } = await db.from("ig_automations").select("*").eq("active", true);
   const lista = data ?? [];
   const t = normalizar(texto);
+  const candidatas: { a: any; prioridade: number }[] = [];
 
   for (const a of lista) {
-    // Comentário mais antigo que a automação: não dispara.
-    if (quando && a.created_at && new Date(a.created_at) > quando) continue;
+    // Comentário feito ANTES da última edição da automação: não dispara.
+    // Assim, criar ou editar uma automação (por exemplo, adicionando um post que
+    // já tem comentários) nunca manda DM para quem comentou antes.
+    const referencia = a.updated_at ?? a.created_at;
+    if (quando && referencia && new Date(referencia) > quando) continue;
 
     // O post precisa bater (array vazio = vale pra todos os posts).
-    const posts: string[] = a.media_ids ?? [];
-    if (posts.length > 0 && mediaId && !posts.includes(mediaId)) continue;
-
-    // "Qualquer palavra ativa": não precisa conferir a palavra.
-    if (a.match_any) return a;
+    const posts: string[] = (a.media_ids ?? []).map(String);
+    const postEspecifico = posts.length > 0;
+    if (postEspecifico && mediaId && !posts.includes(mediaId)) continue;
 
     const palavras = String(a.keyword ?? "")
       .split(",").map((p: string) => normalizar(p)).filter(Boolean);
-    if (palavras.some((p: string) => t.includes(p))) return a;
+    const casa = a.match_any || palavras.some((p: string) => t.includes(p));
+    if (!casa) continue;
+
+    // Quando mais de uma automação serve, vence a mais específica:
+    // post escolhido antes de "todos os posts", palavra antes de "qualquer palavra".
+    candidatas.push({ a, prioridade: (postEspecifico ? 2 : 0) + (a.match_any ? 0 : 1) });
   }
-  return null;
+
+  candidatas.sort((x, y) =>
+    y.prioridade - x.prioridade ||
+    String(y.a.updated_at ?? "").localeCompare(String(x.a.updated_at ?? ""))
+  );
+  return candidatas[0]?.a ?? null;
 }
 
 // Tira acento, deixa minúsculo e apara os espaços.
@@ -451,13 +497,19 @@ async function handleMessage(evento: any) {
     if (lead?.automation_id && lead?.flow_step) {
       const { data: auto } = await db.from("ig_automations")
         .select("*").eq("id", lead.automation_id).maybeSingle();
-      const passo = (auto?.flow?.steps ?? [])
-        .find((p: any) => String(p.id) === String(lead.flow_step));
+      const passos = auto?.flow?.steps ?? [];
       const alvo = normalizar(texto);
-      const botao = (passo?.buttons ?? []).find((b: any) =>
+      const avancaCom = (p: any) => (p?.buttons ?? []).find((b: any) =>
         b?.next !== undefined && b?.next !== null && b?.next !== "" &&
         normalizar(String(b?.title ?? "")) === alvo
       );
+      // Primeiro, os botões da mensagem em que a pessoa está. Se ela tocou num
+      // botão de uma mensagem anterior, procura nas outras mensagens da conversa.
+      const atual = passos.find((p: any) => String(p.id) === String(lead.flow_step));
+      let botao = avancaCom(atual);
+      if (!botao) {
+        for (const p of passos) { botao = avancaCom(p); if (botao) break; }
+      }
       if (auto?.active && botao) {
         await avancarFluxo(`STEP:${auto.id}:${botao.next}`, remetente);
         return;
@@ -499,6 +551,8 @@ async function avancarFluxo(payload: string, igUserId: string) {
     last_source: "dm",
     // Se o passo pede um dado, anota o que estamos esperando.
     expecting: passo?.collect ?? null,
+    // Se o passo tem botão que continua a conversa, fica de olho nas respostas.
+    aguardando_ate: aguardandoAte(passo),
   }, { onConflict: "ig_user_id" });
 
   // Passo com atraso: agenda o próximo pro robô mandar depois.
@@ -524,6 +578,9 @@ async function salvarLead(igUserId: string, username: string, automacao: any, te
     last_keyword: texto.slice(0, 200),
     automation_id: automacao.id,
     flow_step: passos.length ? String(passos[0].id) : null,
+    expecting: passos[0]?.collect ?? null,
+    // A Mensagem 1 tem botão que continua a conversa? Então fica de olho no direct.
+    aguardando_ate: passos.length ? aguardandoAte(passos[0]) : null,
   }, { onConflict: "ig_user_id" });
 }
 

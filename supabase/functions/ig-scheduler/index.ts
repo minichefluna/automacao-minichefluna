@@ -1,19 +1,24 @@
 // =============================================================
 // EDGE FUNCTION: ig-scheduler  (O CARTEIRO)
 //
-// Roda a cada 1 minuto pelo pg_cron. Faz duas coisas:
+// Roda pelo pg_cron, protegida pelo segredo SCHED_SECRET (header x-sched-key).
+//
+// A cada 1 minuto (chamada normal):
+//   0. Busca ativa: comentários novos e respostas no direct.
 //   1. Esvazia a fila (ig_send_queue): os envios que o freio segurou.
 //   2. Manda os passos com atraso (ig_scheduled) que já venceram.
 //
-// Protegida pelo segredo SCHED_SECRET (header x-sched-key), pra
-// ninguém de fora conseguir chamar.
+// A cada 5 segundos, MAS SÓ enquanto alguém está no meio de uma conversa
+// (chamada com ?so=conversas):
+//   Olha o direct de quem acabou de receber uma mensagem com botão, para a
+//   próxima mensagem sair poucos segundos depois do toque.
 // =============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const IG_TOKEN = Deno.env.get("IG_ACCESS_TOKEN") ?? "";
+let IG_TOKEN = Deno.env.get("IG_ACCESS_TOKEN") ?? "";
 const IG_ACCOUNT_ID = Deno.env.get("IG_ACCOUNT_ID") ?? "";
 const GRAPH_VERSION = Deno.env.get("GRAPH_API_VERSION") ?? "v21.0";
 const SCHED_SECRET = Deno.env.get("SCHED_SECRET") ?? "";
@@ -27,35 +32,48 @@ const VALIDADE_COMENTARIO_MS = 7 * 24 * 60 * 60 * 1000;
 
 // ---------- BUSCA ATIVA ----------
 // Enquanto o app não tem acesso avançado no Meta, o Meta não entrega os eventos
-// ao webhook. Então o próprio robô, a cada minuto, busca os comentários novos e
-// as respostas no direct e entrega ao webhook, que processa exatamente igual.
+// ao webhook. Então este robô busca os comentários novos e as respostas no direct
+// e entrega ao webhook, que processa exatamente igual a um evento do Meta.
 // Quando o Meta começar a entregar, nada se repete: cada comentário e cada
 // mensagem são processados uma única vez (tabela ig_processed).
 // Para desligar, crie o segredo POLLING_ENABLED com o valor "false".
 const POLLING = (Deno.env.get("POLLING_ENABLED") ?? "true") !== "false";
 const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/instagram-webhook`;
-// Quantos posts recentes olhar quando alguma automação vale para "todos os posts".
-const POSTS_RECENTES = 12;
+// Quantos posts acompanhar pela contagem de comentários (os mais recentes).
+const MAX_POSTS = 100;
 // Só olha comentários e mensagens das últimas 48 horas.
 const JANELA_BUSCA_MS = 48 * 60 * 60 * 1000;
 
 Deno.serve(async (req) => {
   // Porteiro: só entra quem tem o segredo.
-  if (req.headers.get("x-sched-key") !== SCHED_SECRET || !SCHED_SECRET) {
+  if (!SCHED_SECRET || req.headers.get("x-sched-key") !== SCHED_SECRET) {
     return new Response("não autorizado", { status: 401 });
   }
 
+  await carregarToken();
+  const soConversas = new URL(req.url).searchParams.get("so") === "conversas";
+
   const resumo = {
+    modo: soConversas ? "rapido" : "completo",
     comentarios_novos: 0, mensagens_novas: 0,
     fila_enviados: 0, fila_expirados: 0, atrasados_enviados: 0,
     erros_busca: [] as string[],
   };
 
+  // ---------- MODO RÁPIDO: só o direct de quem está no meio de uma conversa ----------
+  if (soConversas) {
+    if (POLLING && IG_TOKEN && IG_ACCOUNT_ID) {
+      try { await buscarConversas(resumo, true); }
+      catch (e) { resumo.erros_busca.push(`conversas: ${e}`); }
+    }
+    return responder(resumo);
+  }
+
   // ---------- 0) BUSCA ATIVA ----------
   if (POLLING && IG_TOKEN && IG_ACCOUNT_ID) {
     try { await buscarComentarios(resumo); }
     catch (e) { resumo.erros_busca.push(`comentarios: ${e}`); }
-    try { await buscarConversas(resumo); }
+    try { await buscarConversas(resumo, false); }
     catch (e) { resumo.erros_busca.push(`conversas: ${e}`); }
   }
 
@@ -126,44 +144,76 @@ Deno.serve(async (req) => {
     const envio = await sendStep(automacao, passo, { id: s.ig_user_id });
     await db.from("ig_scheduled").update({ sent: true }).eq("id", s.id);
     await log(s.ig_user_id, s.automation_id, "dm", "flow", envio.ok ? "ok" : "erro", envio.motivo ?? "");
-    if (envio.ok) resumo.atrasados_enviados++;
+    if (envio.ok) {
+      resumo.atrasados_enviados++;
+      // A pessoa passa a estar nesse passo, e o direct dela volta a ser acompanhado.
+      await db.from("ig_leads").update({
+        flow_step: String(passo.id),
+        expecting: passo?.collect ?? null,
+        aguardando_ate: aguardandoAte(passo),
+      }).eq("ig_user_id", s.ig_user_id);
+    }
   }
 
-  return new Response(JSON.stringify(resumo), {
-    headers: { "Content-Type": "application/json" },
-  });
+  return responder(resumo);
 });
+
+function responder(resumo: unknown) {
+  return new Response(JSON.stringify(resumo), { headers: { "Content-Type": "application/json" } });
+}
 
 // =============================================================
 // BUSCA ATIVA: comentários novos
+//
+// Uma única chamada traz os posts com a contagem de comentários de cada um.
+// Só busca os comentários dos posts cuja contagem mudou desde a última vez,
+// então acompanhar todos os posts custa pouquíssimo.
 // =============================================================
 async function buscarComentarios(resumo: any) {
   const { data: autos } = await db.from("ig_automations")
-    .select("id, media_ids, created_at").eq("active", true);
+    .select("id, media_ids, created_at, updated_at").eq("active", true);
   if (!autos?.length) return;
 
-  // Quais posts olhar: os escolhidos nas automações, mais os recentes
-  // quando alguma automação vale para todos os posts.
-  const posts = new Set<string>();
+  const especificos = new Set<string>();
   let todos = false;
   for (const a of autos) {
     const m: string[] = a.media_ids ?? [];
     if (m.length === 0) todos = true;
-    else m.forEach((x) => posts.add(String(x)));
-  }
-  if (todos) {
-    const j = await igGet(`/me/media?fields=id&limit=${POSTS_RECENTES}`);
-    if (j?.error) resumo.erros_busca.push(`media: ${j.error.message}`);
-    (j?.data ?? []).forEach((m: any) => posts.add(String(m.id)));
+    else m.forEach((x) => especificos.add(String(x)));
   }
 
-  // Nada anterior à automação mais antiga, nem fora da janela de busca.
+  // Posts recentes com a contagem de comentários (até MAX_POSTS, em páginas de 50).
+  const contagem = new Map<string, number>();
+  let caminho: string | null = `/me/media?fields=id,comments_count&limit=50`;
+  while (caminho && contagem.size < MAX_POSTS) {
+    const j = await igGet(caminho);
+    if (j?.error) { resumo.erros_busca.push(`media: ${j.error.message}`); break; }
+    for (const m of j?.data ?? []) contagem.set(String(m.id), Number(m.comments_count ?? 0));
+    const proxima = j?.paging?.next ? String(j.paging.next) : "";
+    caminho = proxima ? proxima.replace(/^https:\/\/graph\.instagram\.com\/v[\d.]+/, "") : null;
+  }
+
+  // Quais posts interessam: todos (se alguma automação vale para todos) ou os escolhidos.
+  const alvo = new Set<string>(todos ? [...contagem.keys(), ...especificos] : [...especificos]);
+  if (!alvo.size) return;
+
+  // A contagem guardada da última rodada.
+  const { data: estado } = await db.from("ig_media_state")
+    .select("media_id, comments_count").in("media_id", [...alvo]);
+  const anterior = new Map((estado ?? []).map((e: any) => [String(e.media_id), Number(e.comments_count)]));
+
+  // Nada anterior à edição mais antiga das automações, nem fora da janela de busca.
   const corte = Math.max(
     Date.now() - JANELA_BUSCA_MS,
-    Math.min(...autos.map((a: any) => new Date(a.created_at).getTime())),
+    Math.min(...autos.map((a: any) => new Date(a.updated_at ?? a.created_at).getTime())),
   );
 
-  for (const mediaId of posts) {
+  for (const mediaId of alvo) {
+    const atual = contagem.get(mediaId);
+    // Contagem igual à da última rodada: nenhum comentário novo, não gasta chamada.
+    // (Posts escolhidos que estão fora da lista recente são sempre conferidos.)
+    if (atual !== undefined && anterior.get(mediaId) === atual) continue;
+
     const j = await igGet(`/${mediaId}/comments?fields=id,text,timestamp,from&limit=50`);
     if (j?.error) { resumo.erros_busca.push(`post ${mediaId}: ${j.error.message}`); continue; }
 
@@ -172,56 +222,85 @@ async function buscarComentarios(resumo: any) {
       String(c.from.id) !== IG_ACCOUNT_ID &&
       paraData(c.timestamp).getTime() >= corte
     );
-    if (!candidatos.length) continue;
 
-    // Descarta o que já foi processado (pela busca ou pelo webhook do Meta).
-    const { data: ja } = await db.from("ig_processed")
-      .select("event_id").in("event_id", candidatos.map((c: any) => `c:${c.id}`));
-    const vistos = new Set((ja ?? []).map((x: any) => x.event_id));
+    if (candidatos.length) {
+      // Descarta o que já foi processado (pela busca ou pelo webhook do Meta).
+      const { data: ja } = await db.from("ig_processed")
+        .select("event_id").in("event_id", candidatos.map((c: any) => `c:${c.id}`));
+      const vistos = new Set((ja ?? []).map((x: any) => x.event_id));
 
-    for (const c of candidatos) {
-      if (vistos.has(`c:${c.id}`)) continue;
-      await encaminhar({
-        object: "instagram",
-        entry: [{
-          id: IG_ACCOUNT_ID,
-          time: Math.floor(Date.now() / 1000),
-          changes: [{
-            field: "comments",
-            value: {
-              id: String(c.id),
-              text: c.text ?? "",
-              timestamp: c.timestamp,
-              from: { id: String(c.from.id), username: c.from.username ?? "" },
-              media: { id: mediaId },
-            },
+      for (const c of candidatos) {
+        if (vistos.has(`c:${c.id}`)) continue;
+        await encaminhar({
+          object: "instagram",
+          entry: [{
+            id: IG_ACCOUNT_ID,
+            time: Math.floor(Date.now() / 1000),
+            changes: [{
+              field: "comments",
+              value: {
+                id: String(c.id),
+                text: c.text ?? "",
+                timestamp: c.timestamp,
+                from: { id: String(c.from.id), username: c.from.username ?? "" },
+                media: { id: mediaId },
+              },
+            }],
           }],
-        }],
+        });
+        resumo.comentarios_novos++;
+      }
+    }
+
+    // Guarda a contagem para a próxima rodada.
+    if (atual !== undefined) {
+      await db.from("ig_media_state").upsert({
+        media_id: mediaId, comments_count: atual, updated_at: new Date().toISOString(),
       });
-      resumo.comentarios_novos++;
     }
   }
 }
 
 // =============================================================
 // BUSCA ATIVA: respostas no direct (toques nos botões e dados digitados)
+//
+// rapido = true: só quem acabou de receber uma mensagem com botão que continua
+// a conversa (aguardando_ate no futuro). É o que roda a cada 5 segundos.
 // =============================================================
-async function buscarConversas(resumo: any) {
-  // Só interessa quem está no meio de uma conversa automática recente.
-  const desde = new Date(Date.now() - JANELA_BUSCA_MS).toISOString();
-  const { data: leads } = await db.from("ig_leads")
+async function buscarConversas(resumo: any, rapido: boolean) {
+  let consulta = db.from("ig_leads")
     .select("ig_user_id, updated_at, flow_step, automation_id")
-    .not("automation_id", "is", null)
-    .gte("updated_at", desde);
+    .not("automation_id", "is", null);
+  consulta = rapido
+    ? consulta.gt("aguardando_ate", new Date().toISOString())
+    : consulta.gte("updated_at", new Date(Date.now() - JANELA_BUSCA_MS).toISOString());
+  const { data: leads } = await consulta;
   if (!leads?.length) return;
+
+  // Com poucas pessoas esperando, busca a conversa de cada uma direto (mais preciso).
+  // Com muitas, uma única chamada traz as conversas mais recentes.
+  let conversas: any[] = [];
+  if (leads.length <= 2) {
+    for (const l of leads) {
+      const j = await igGet(
+        `/me/conversations?platform=instagram&user_id=${l.ig_user_id}` +
+        `&fields=participants,messages.limit(6){id,message,from,created_time}`,
+      );
+      if (j?.error) { conversas = []; break; }
+      conversas.push(...(j?.data ?? []));
+    }
+  }
+  if (!conversas.length) {
+    const j = await igGet(
+      `/me/conversations?platform=instagram&fields=participants,messages.limit(6){id,message,from,created_time}&limit=25`,
+    );
+    if (j?.error) { resumo.erros_busca.push(`conversas: ${j.error.message}`); return; }
+    conversas = j?.data ?? [];
+  }
+
   const porId = new Map(leads.map((l: any) => [String(l.ig_user_id), l]));
 
-  const j = await igGet(
-    `/me/conversations?platform=instagram&fields=participants,updated_time,messages.limit(6){id,message,from,created_time}&limit=25`,
-  );
-  if (j?.error) { resumo.erros_busca.push(`conversas: ${j.error.message}`); return; }
-
-  for (const conversa of j?.data ?? []) {
+  for (const conversa of conversas) {
     const outro = (conversa?.participants?.data ?? [])
       .find((p: any) => String(p.id) !== IG_ACCOUNT_ID);
     const lead: any = outro ? porId.get(String(outro.id)) : null;
@@ -278,6 +357,22 @@ async function igGet(caminho: string) {
   } catch (e) {
     return { error: { message: String(e) } };
   }
+}
+
+// Lê o token mais recente (renovado toda semana) do banco.
+async function carregarToken() {
+  try {
+    const { data } = await db.from("ig_secrets").select("value").eq("id", "ig_access_token").maybeSingle();
+    if (data?.value) IG_TOKEN = String(data.value);
+  } catch { /* sem a tabela, segue com o token do segredo */ }
+}
+
+// Mesmo critério do webhook: o passo espera resposta da pessoa?
+function aguardandoAte(passo: any) {
+  const avanca = (passo?.buttons ?? []).some((b: any) =>
+    !b?.url && b?.next !== undefined && b?.next !== null && b?.next !== ""
+  );
+  return (avanca || passo?.collect) ? new Date(Date.now() + 5 * 60 * 1000).toISOString() : null;
 }
 
 // =============================================================

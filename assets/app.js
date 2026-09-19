@@ -1227,6 +1227,16 @@ async function salvarAutomacao() {
     ed.passos.forEach((p, i) => {
       const n = i + 2;
       if (!String(p.message ?? "").trim()) problemas.push(`Escreva o texto da Mensagem ${n}.`);
+      // Botões que aparecem de verdade (encerrar não vira botão).
+      const visiveis = (p.buttons ?? []).filter((b) => b.dest !== "fim");
+      if (visiveis.length > 3) {
+        problemas.push(`A Mensagem ${n} tem ${visiveis.length} botões. O Instagram aceita no máximo 3 por mensagem.`);
+      }
+      // É pelo nome que o sistema reconhece qual botão foi tocado.
+      const nomes = visiveis.map((b) => String(b.title ?? "").trim().toLowerCase()).filter(Boolean);
+      if (new Set(nomes).size < nomes.length) {
+        problemas.push(`A Mensagem ${n} tem dois botões com o mesmo nome. Dê nomes diferentes a eles.`);
+      }
       (p.buttons ?? []).forEach((b) => {
         const nome = String(b.title ?? "");
         if (b.dest !== "fim" && !nome.trim()) problemas.push(`Dê um nome ao botão da Mensagem ${n}.`);

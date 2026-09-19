@@ -7,41 +7,52 @@
 // Detalhe importante: este endpoint NÃO leva a versão no caminho
 // (é graph.instagram.com/refresh_access_token, sem o /v21.0).
 //
-// ATENÇÃO: a renovação devolve um token NOVO. Guardamos a validade no
-// banco, mas o token em si precisa ser atualizado no segredo
-// IG_ACCESS_TOKEN das Edge Functions. O sistema avisa no log quando
-// isso for necessário.
+// A renovação devolve um token. Ele é guardado na tabela ig_secrets
+// (que só o servidor lê), e todas as funções usam o token de lá.
+// Assim o sistema nunca fica com um token vencido.
 // =============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const IG_TOKEN = Deno.env.get("IG_ACCESS_TOKEN") ?? "";
+const IG_TOKEN_SEGREDO = Deno.env.get("IG_ACCESS_TOKEN") ?? "";
 const SCHED_SECRET = Deno.env.get("SCHED_SECRET") ?? "";
 
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
 Deno.serve(async (req) => {
   // Porteiro: só entra quem tem o segredo.
-  if (req.headers.get("x-sched-key") !== SCHED_SECRET || !SCHED_SECRET) {
+  if (!SCHED_SECRET || req.headers.get("x-sched-key") !== SCHED_SECRET) {
     return new Response("não autorizado", { status: 401 });
   }
 
+  // Parte do token mais recente que o sistema conhece.
+  let tokenAtual = IG_TOKEN_SEGREDO;
+  try {
+    const { data } = await db.from("ig_secrets").select("value").eq("id", "ig_access_token").maybeSingle();
+    if (data?.value) tokenAtual = String(data.value);
+  } catch { /* segue com o token do segredo */ }
+
   try {
     const url = "https://graph.instagram.com/refresh_access_token"
-      + `?grant_type=ig_refresh_token&access_token=${encodeURIComponent(IG_TOKEN)}`;
+      + `?grant_type=ig_refresh_token&access_token=${encodeURIComponent(tokenAtual)}`;
 
     const resp = await fetch(url);
     const json = await resp.json().catch(() => ({}));
 
-    if (!resp.ok || json?.error) {
+    if (!resp.ok || json?.error || !json?.access_token) {
       const erro = json?.error?.message ?? `HTTP ${resp.status}`;
       await db.from("ig_token_status").upsert({
         id: "main", last_ok: false, last_error: erro, updated_at: new Date().toISOString(),
       });
       return new Response(JSON.stringify({ ok: false, erro }), { status: 200 });
     }
+
+    // Guarda o token renovado. É dele que todas as funções passam a ler.
+    await db.from("ig_secrets").upsert({
+      id: "ig_access_token", value: String(json.access_token), updated_at: new Date().toISOString(),
+    });
 
     // expires_in vem em segundos (cerca de 60 dias).
     const expiraEm = new Date(Date.now() + Number(json.expires_in ?? 0) * 1000).toISOString();
@@ -55,10 +66,7 @@ Deno.serve(async (req) => {
       updated_at: new Date().toISOString(),
     });
 
-    // O token novo aparece aqui. Copie e cole no segredo IG_ACCESS_TOKEN
-    // quando for trocar (o antigo continua valendo até vencer).
-    console.log("Token renovado. Nova validade:", expiraEm);
-
+    console.log("Token renovado e guardado. Nova validade:", expiraEm);
     return new Response(JSON.stringify({ ok: true, expires_at: expiraEm }), {
       headers: { "Content-Type": "application/json" },
     });
