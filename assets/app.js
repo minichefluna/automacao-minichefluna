@@ -74,6 +74,12 @@ const state = {
   abaIg: "metricas",
   automacoes: [],
   posts: [],
+  stories: [],
+  midiaCarregada: false,   // posts e stories já foram buscados nesta sessão?
+  leads: [],               // a planilha da aba Interações
+  leadsFim: false,         // não há mais páginas para carregar
+  filtroLeads: { busca: "", origem: "", tag: "", automacao: "" },
+  ordemLeads: { campo: "ultima_interacao", desc: true },
   metricas: null,
   ed: null,        // a automação sendo editada
   sujo: false,     // tem alteração não salva?
@@ -298,11 +304,12 @@ function renderInstagram() {
     ${faixaModoLocal()}
     <div class="cabecalho-pagina">
       <h1>Instagram</h1>
-      <p>Suas métricas e suas automações de direct.</p>
+      <p>Suas métricas, suas automações de direct e quem interagiu com elas.</p>
     </div>
     <div class="abas">
       <button class="aba" data-aba="metricas">Métricas</button>
       <button class="aba" data-aba="automacoes">Automações</button>
+      <button class="aba" data-aba="interacoes">Interações</button>
     </div>
     <div id="area-ig"></div>`;
 
@@ -313,6 +320,7 @@ function renderInstagram() {
   $$(".aba").forEach((b) => b.classList.toggle("ativa", b.dataset.aba === state.abaIg));
 
   if (state.abaIg === "metricas") renderMetricas();
+  else if (state.abaIg === "interacoes") renderInteracoes();
   else renderListaAutomacoes();
 }
 
@@ -420,7 +428,7 @@ function renderListaAutomacoes() {
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <div>
         <h2>Suas automações</h2>
-        <p class="pequeno fraco" style="margin-top:3px">Alguém comenta a palavra, o sistema manda a DM.</p>
+        <p class="pequeno fraco" style="margin-top:3px">Alguém comenta a palavra num post, ou responde um story, e o sistema manda a DM.</p>
       </div>
       <button class="botao primario" id="btn-nova">Nova automação</button>
     </div>
@@ -447,13 +455,22 @@ function renderListaAutomacoes() {
 
   destino.innerHTML = lista.map((a) => {
     const palavras = a.match_any ? "Qualquer palavra ativa" : (a.keyword || "sem palavra");
+    const ehStory = (a.tipo ?? "post") === "story";
+    const qtd = (a.media_ids ?? []).length;
+    const alcance = ehStory
+      ? (qtd ? `${qtd} story${qtd > 1 ? "s" : ""} escolhido${qtd > 1 ? "s" : ""}` : "Qualquer story")
+      : (qtd ? `${qtd} post${qtd > 1 ? "s" : ""}` : "Todos os posts");
     return `<div class="linha-auto">
-      <div class="etiqueta ${a.active ? "ligada" : "desligada"}">
-        <span class="ponto"></span>${a.active ? "Ligada" : "Desligada"}
-      </div>
+      ${miniaturaAutomacao(a)}
       <div class="meio">
         <div class="nome">${esc(a.nome || "Sem nome")}</div>
-        <div class="palavras">${esc(palavras)}</div>
+        <div class="palavras">
+          <span class="tipo-auto ${ehStory ? "story" : ""}">${ehStory ? "Story" : "Post"}</span>
+          ${esc(alcance)} · ${esc(palavras)}
+        </div>
+      </div>
+      <div class="etiqueta ${a.active ? "ligada" : "desligada"}">
+        <span class="ponto"></span>${a.active ? "Ligada" : "Desligada"}
       </div>
       <button class="botao pequeno" data-editar="${esc(a.id)}">Editar</button>
       <button class="botao pequeno perigo" data-apagar="${esc(a.id)}">Apagar</button>
@@ -463,6 +480,34 @@ function renderListaAutomacoes() {
   $$("[data-editar]").forEach((b) => b.addEventListener("click", () =>
     abrirEditor(state.automacoes.find((a) => String(a.id) === b.dataset.editar))));
   $$("[data-apagar]").forEach((b) => b.addEventListener("click", () => apagarAutomacao(b.dataset.apagar)));
+
+  // As miniaturas dependem da lista de posts e stories: busca uma vez e redesenha.
+  if (!state.midiaCarregada) carregarPosts().then(() => {
+    if (state.abaIg === "automacoes" && !state.ed && $("#lista-autos")) renderListaAutomacoes();
+  });
+}
+
+// A foto do conteúdo vinculado, na frente do nome da automação.
+function miniaturaAutomacao(a) {
+  const ehStory = (a.tipo ?? "post") === "story";
+  const ids = (a.media_ids ?? []).map(String);
+  const fonte = ehStory ? state.stories : state.posts;
+  const achado = ids.map((id) => fonte.find((m) => m.id === id)).find((m) => m?.miniatura);
+  const extra = ids.length > 1 ? `<span class="mini-extra">+${ids.length - 1}</span>` : "";
+
+  if (achado) {
+    return `<div class="mini ${ehStory ? "mini-story" : ""}" title="${esc(achado.legenda || "")}">
+      <img src="${esc(achado.miniatura)}" alt="" loading="lazy">${extra}
+    </div>`;
+  }
+  // Sem foto: "todos os posts", "qualquer story" ou um conteúdo que já saiu do ar.
+  const icone = ehStory
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5" stroke-dasharray="3 2.4"/><circle cx="12" cy="12" r="3.5"/></svg>`
+    : ids.length
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>`
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`;
+  const rotulo = ehStory ? (ids.length ? "Story fora do ar" : "Qualquer story") : (ids.length ? "Post" : "Todos os posts");
+  return `<div class="mini mini-vazia ${ehStory ? "mini-story" : ""}" title="${rotulo}">${icone}${extra}</div>`;
 }
 
 async function apagarAutomacao(id) {
@@ -479,6 +524,342 @@ async function apagarAutomacao(id) {
   toast("Automação apagada.");
 }
 
+/* ------------------- Sub-aba: Interações (a planilha de leads) ------------------- */
+
+const TAMANHO_PAGINA_LEADS = 500;
+const ORIGENS = {
+  comment: { rotulo: "Comentário", classe: "origem-comentario" },
+  story_reply: { rotulo: "Story", classe: "origem-story" },
+  dm: { rotulo: "Direct", classe: "origem-dm" },
+};
+
+// As colunas da planilha: rótulo, campo de ordenação e como exportar.
+const COLUNAS_LEADS = [
+  { id: "pessoa", rotulo: "Pessoa", campo: "username" },
+  { id: "origem", rotulo: "Origem", campo: "last_source" },
+  { id: "palavra", rotulo: "Palavra", campo: "last_keyword" },
+  { id: "contato", rotulo: "Contato", campo: "email" },
+  { id: "tags", rotulo: "Etiquetas", campo: null },
+  { id: "automacao", rotulo: "Automação", campo: "automacao_nome" },
+  { id: "interacoes", rotulo: "Interações", campo: "interacoes", numero: true },
+  { id: "enviadas", rotulo: "Mensagens enviadas", campo: "mensagens_enviadas", numero: true },
+  { id: "primeira", rotulo: "Primeira vez", campo: "created_at" },
+  { id: "ultima", rotulo: "Última vez", campo: "ultima_interacao" },
+];
+
+async function renderInteracoes() {
+  const area = $("#area-ig");
+
+  if (!sb) {
+    area.innerHTML = `<div class="cartao"><div class="vazio">
+      <h2>Interações aparecem aqui</h2>
+      <p>Cada pessoa que entrar por uma automação vira uma linha desta planilha.<br>
+      No modo de teste local não há banco conectado, então a lista fica vazia.</p>
+    </div></div>`;
+    return;
+  }
+
+  area.innerHTML = `<div class="cartao"><p class="fraco">Carregando interações...</p></div>`;
+  state.leads = [];
+  state.leadsFim = false;
+  await carregarLeads();
+  if (!state.midiaCarregada) carregarPosts().then(() => { if (state.abaIg === "interacoes") desenharTabelaLeads(); });
+  desenharInteracoes();
+}
+
+// Busca uma página de leads (a view já traz a automação e o total de mensagens enviadas).
+async function carregarLeads() {
+  try {
+    const inicio = state.leads.length;
+    const { data, error } = await sb.from("ig_leads_painel")
+      .select("*")
+      .order("ultima_interacao", { ascending: false, nullsFirst: false })
+      .range(inicio, inicio + TAMANHO_PAGINA_LEADS - 1);
+    if (error) throw error;
+    state.leads.push(...(data ?? []));
+    state.leadsFim = (data ?? []).length < TAMANHO_PAGINA_LEADS;
+  } catch (e) {
+    console.warn("Não deu pra ler os leads:", e);
+    toast("Não deu pra carregar as interações. Tente recarregar a página.", "erro");
+    state.leadsFim = true;
+  }
+}
+
+function desenharInteracoes() {
+  const area = $("#area-ig");
+  const leads = state.leads;
+  const hoje = new Date().toDateString();
+  const comContato = leads.filter((l) => l.email || l.telefone).length;
+  const novosHoje = leads.filter((l) => new Date(l.created_at).toDateString() === hoje).length;
+  const totalInter = leads.reduce((t, l) => t + Number(l.interacoes || 0), 0);
+
+  const tags = [...new Set(leads.flatMap((l) => l.tags ?? []))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const autos = [...new Set(leads.map((l) => l.automacao_nome).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const f = state.filtroLeads;
+
+  area.innerHTML = `
+    <div class="grade" style="margin-bottom:18px">
+      <div class="cartao"><div class="rotulo">Leads</div><div class="numero-grande">${leads.length.toLocaleString("pt-BR")}${state.leadsFim ? "" : "+"}</div></div>
+      <div class="cartao"><div class="rotulo">Com contato</div><div class="numero-grande">${comContato.toLocaleString("pt-BR")}</div></div>
+      <div class="cartao"><div class="rotulo">Novos hoje</div><div class="numero-grande">${novosHoje.toLocaleString("pt-BR")}</div></div>
+      <div class="cartao"><div class="rotulo">Interações</div><div class="numero-grande">${totalInter.toLocaleString("pt-BR")}</div></div>
+    </div>
+
+    <div class="barra-filtros">
+      <input type="search" id="f-busca" placeholder="Buscar por nome, @, palavra ou contato" value="${esc(f.busca)}" aria-label="Buscar">
+      <select id="f-origem" aria-label="Filtrar por origem">
+        <option value="">Todas as origens</option>
+        ${Object.entries(ORIGENS).map(([v, o]) => `<option value="${v}" ${f.origem === v ? "selected" : ""}>${o.rotulo}</option>`).join("")}
+      </select>
+      <select id="f-tag" aria-label="Filtrar por etiqueta">
+        <option value="">Todas as etiquetas</option>
+        ${tags.map((t) => `<option value="${esc(t)}" ${f.tag === t ? "selected" : ""}>${esc(t)}</option>`).join("")}
+      </select>
+      <select id="f-auto" aria-label="Filtrar por automação">
+        <option value="">Todas as automações</option>
+        ${autos.map((a) => `<option value="${esc(a)}" ${f.automacao === a ? "selected" : ""}>${esc(a)}</option>`).join("")}
+      </select>
+      <button class="botao" id="btn-exportar">Exportar planilha</button>
+    </div>
+
+    <div id="tabela-leads"></div>`;
+
+  const aoFiltrar = () => {
+    f.busca = $("#f-busca").value;
+    f.origem = $("#f-origem").value;
+    f.tag = $("#f-tag").value;
+    f.automacao = $("#f-auto").value;
+    desenharTabelaLeads();
+  };
+  $("#f-busca").addEventListener("input", aoFiltrar);
+  ["#f-origem", "#f-tag", "#f-auto"].forEach((s) => $(s).addEventListener("change", aoFiltrar));
+  $("#btn-exportar").addEventListener("click", exportarLeads);
+
+  desenharTabelaLeads();
+}
+
+// Aplica busca, filtros e ordenação aos leads carregados.
+function leadsFiltrados() {
+  const f = state.filtroLeads;
+  const busca = f.busca.trim().toLowerCase();
+  let lista = state.leads.filter((l) => {
+    if (f.origem && l.last_source !== f.origem) return false;
+    if (f.tag && !(l.tags ?? []).includes(f.tag)) return false;
+    if (f.automacao && l.automacao_nome !== f.automacao) return false;
+    if (busca) {
+      const alvo = [l.nome, l.username, l.last_keyword, l.email, l.telefone, ...(l.tags ?? [])]
+        .filter(Boolean).join(" ").toLowerCase();
+      if (!alvo.includes(busca)) return false;
+    }
+    return true;
+  });
+
+  const { campo, desc } = state.ordemLeads;
+  const col = COLUNAS_LEADS.find((c) => c.campo === campo);
+  lista = [...lista].sort((a, b) => {
+    let x = a[campo], y = b[campo];
+    if (campo === "ultima_interacao") { x = x ?? a.updated_at; y = y ?? b.updated_at; }
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    const r = col?.numero ? Number(x) - Number(y) : String(x).localeCompare(String(y), "pt-BR");
+    return desc ? -r : r;
+  });
+  return lista;
+}
+
+function desenharTabelaLeads() {
+  const alvo = $("#tabela-leads");
+  if (!alvo) return;
+  const lista = leadsFiltrados();
+
+  if (!state.leads.length) {
+    alvo.innerHTML = `<div class="cartao"><div class="vazio">
+      <h2>Nenhuma interação ainda</h2>
+      <p>Quando alguém entrar por uma automação, aparece aqui com tudo o que você precisa saber.</p>
+    </div></div>`;
+    return;
+  }
+
+  const { campo, desc } = state.ordemLeads;
+  const seta = (c) => c.campo === campo ? (desc ? " ↓" : " ↑") : "";
+
+  alvo.innerHTML = `
+    <p class="pequeno fraco" style="margin:0 0 8px">
+      Mostrando ${lista.length.toLocaleString("pt-BR")} de ${state.leads.length.toLocaleString("pt-BR")} carregados.
+      Clique no título de uma coluna para ordenar.
+    </p>
+    <div class="tabela-rolagem">
+      <table class="planilha">
+        <thead><tr>
+          ${COLUNAS_LEADS.map((c) => c.campo
+            ? `<th scope="col"><button type="button" class="ordenar" data-ordenar="${c.campo}">${c.rotulo}${seta(c)}</button></th>`
+            : `<th scope="col">${c.rotulo}</th>`).join("")}
+        </tr></thead>
+        <tbody>
+          ${lista.length ? lista.map(linhaLead).join("") : `<tr><td colspan="${COLUNAS_LEADS.length}" class="fraco" style="text-align:center;padding:26px">Nenhum lead com esses filtros.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    ${state.leadsFim ? "" : `<div style="text-align:center;margin-top:14px"><button class="botao" id="btn-mais-leads">Carregar mais</button></div>`}`;
+
+  $$("[data-ordenar]", alvo).forEach((b) => b.addEventListener("click", () => {
+    const c = b.dataset.ordenar;
+    state.ordemLeads = { campo: c, desc: state.ordemLeads.campo === c ? !state.ordemLeads.desc : true };
+    desenharTabelaLeads();
+  }));
+  $$("[data-editar-tags]", alvo).forEach((b) => b.addEventListener("click", () => editarTags(b.dataset.editarTags)));
+  // Foto de perfil que não carrega (os links do Instagram expiram): mostra a inicial.
+  $$("img.avatar-lead", alvo).forEach((img) => img.addEventListener("error", () => {
+    const s = document.createElement("span");
+    s.className = "avatar-lead avatar-inicial";
+    s.textContent = img.dataset.inicial || "?";
+    img.replaceWith(s);
+  }));
+  $("#btn-mais-leads")?.addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = "Carregando...";
+    await carregarLeads();
+    desenharInteracoes();
+  });
+}
+
+function linhaLead(l) {
+  const origem = ORIGENS[l.last_source] ?? { rotulo: l.last_source || "Outro", classe: "" };
+  const midia = [...state.posts, ...state.stories].find((m) => m.id === String(l.last_media_id ?? ""));
+  const inicial = String(l.nome || l.username || "?").trim().charAt(0).toUpperCase();
+  const perfil = l.username ? `https://www.instagram.com/${encodeURIComponent(l.username)}/` : "";
+  const ultima = l.ultima_interacao ?? l.updated_at;
+
+  return `<tr>
+    <td>
+      <div class="pessoa">
+        ${l.foto_url
+          ? `<img class="avatar-lead" src="${esc(l.foto_url)}" alt="" loading="lazy" data-inicial="${esc(inicial)}">`
+          : `<span class="avatar-lead avatar-inicial">${esc(inicial)}</span>`}
+        <div>
+          <div class="pessoa-nome">${esc(l.nome || l.username || "Sem nome")}</div>
+          ${l.username
+            ? `<a class="pessoa-user" href="${perfil}" target="_blank" rel="noopener noreferrer">@${esc(l.username)}</a>`
+            : `<span class="pessoa-user">id ${esc(l.ig_user_id)}</span>`}
+        </div>
+      </div>
+    </td>
+    <td>
+      <div class="origem-celula">
+        ${midia?.miniatura ? `<img class="mini-origem" src="${esc(midia.miniatura)}" alt="" loading="lazy">` : ""}
+        <span class="badge-origem ${origem.classe}">${esc(origem.rotulo)}</span>
+      </div>
+    </td>
+    <td class="celula-texto" title="${esc(l.last_keyword || "")}">${esc(l.last_keyword || "")}</td>
+    <td>
+      ${l.email ? `<div><a href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>` : ""}
+      ${l.telefone ? `<div><a href="tel:${esc(String(l.telefone).replace(/[^\d+]/g, ""))}">${esc(l.telefone)}</a></div>` : ""}
+      ${!l.email && !l.telefone ? `<span class="fraco">sem contato</span>` : ""}
+    </td>
+    <td>
+      <div class="tags-celula" id="tags-${esc(l.ig_user_id)}">
+        ${(l.tags ?? []).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}
+        <button type="button" class="botao-icone" data-editar-tags="${esc(l.ig_user_id)}" title="Editar etiquetas" aria-label="Editar etiquetas">✎</button>
+      </div>
+    </td>
+    <td>
+      ${l.automacao_nome ? `<div>${esc(l.automacao_nome)}</div>` : `<span class="fraco">sem automação</span>`}
+      ${l.flow_step ? `<div class="pequeno fraco">na mensagem ${esc(l.flow_step)}</div>` : ""}
+    </td>
+    <td class="numero">${Number(l.interacoes || 0).toLocaleString("pt-BR")}</td>
+    <td class="numero">${Number(l.mensagens_enviadas || 0).toLocaleString("pt-BR")}</td>
+    <td title="${esc(dataHora(l.created_at))}">${esc(dataCurta(l.created_at))}</td>
+    <td title="${esc(dataHora(ultima))}">${esc(tempoRelativo(ultima))}</td>
+  </tr>`;
+}
+
+// Troca as etiquetas da célula por um campo de texto. Enter salva, Esc cancela.
+function editarTags(igUserId) {
+  const lead = state.leads.find((l) => String(l.ig_user_id) === String(igUserId));
+  const celula = document.getElementById(`tags-${igUserId}`);
+  if (!lead || !celula) return;
+
+  celula.innerHTML = `<input type="text" class="entrada-tags" value="${esc((lead.tags ?? []).join(", "))}"
+    placeholder="Separe por vírgula" aria-label="Etiquetas">`;
+  const campo = celula.querySelector("input");
+  campo.focus();
+  campo.select();
+
+  let terminado = false;
+  const salvar = async () => {
+    if (terminado) return;
+    terminado = true;
+    const novas = [...new Set(campo.value.split(",").map((s) => s.trim()).filter(Boolean))];
+    try {
+      const { error } = await sb.from("ig_leads").update({ tags: novas }).eq("ig_user_id", igUserId);
+      if (error) throw error;
+      lead.tags = novas;
+      toast("Etiquetas salvas.", "sucesso");
+    } catch (e) {
+      toast("Não deu pra salvar as etiquetas.", "erro");
+    }
+    desenharInteracoes();
+  };
+  campo.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); salvar(); }
+    if (e.key === "Escape") { terminado = true; desenharTabelaLeads(); }
+  });
+  campo.addEventListener("blur", salvar);
+}
+
+// Baixa os leads filtrados como planilha (CSV que abre direto no Excel e no Google Planilhas).
+function exportarLeads() {
+  const lista = leadsFiltrados();
+  if (!lista.length) { toast("Não há leads para exportar com esses filtros."); return; }
+
+  const cabecalho = ["Nome", "Usuário", "Perfil", "Origem", "Palavra", "E-mail", "Telefone",
+    "Etiquetas", "Automação", "Mensagem atual", "Interações", "Mensagens enviadas",
+    "Primeira vez", "Última vez", "ID do Instagram"];
+  const celula = (v) => {
+    const s = String(v ?? "");
+    return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const linhas = lista.map((l) => [
+    l.nome, l.username ? `@${l.username}` : "",
+    l.username ? `https://www.instagram.com/${l.username}/` : "",
+    (ORIGENS[l.last_source]?.rotulo ?? l.last_source ?? ""),
+    l.last_keyword, l.email, l.telefone, (l.tags ?? []).join(", "),
+    l.automacao_nome, l.flow_step, l.interacoes, l.mensagens_enviadas,
+    dataHora(l.created_at), dataHora(l.ultima_interacao ?? l.updated_at), l.ig_user_id,
+  ].map(celula).join(";"));
+
+  // O BOM no começo faz o Excel reconhecer os acentos; ";" é o separador do Excel em português.
+  const csv = "﻿" + [cabecalho.join(";"), ...linhas].join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `interacoes-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  toast(`${lista.length} lead(s) exportado(s).`, "sucesso");
+}
+
+function dataCurta(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
+}
+function dataHora(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function tempoRelativo(iso) {
+  if (!iso) return "";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "agora há pouco";
+  if (s < 3600) return `há ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `há ${Math.floor(s / 3600)} h`;
+  if (s < 86400 * 7) { const d = Math.floor(s / 86400); return `há ${d} dia${d > 1 ? "s" : ""}`; }
+  return dataCurta(iso);
+}
+
 /* =============================================================
    8. O EDITOR DE AUTOMAÇÃO
    ============================================================= */
@@ -490,10 +871,12 @@ function automacaoEmBranco() {
   return {
     id: null,
     nome: "",
+    tipo: "post",            // "post" (comentário) ou "story" (resposta ao story)
     palavras: [],
     match_any: false,
     active: true,
-    media_ids: [],
+    media_ids: [],           // posts ou stories escolhidos (vazio = todos)
+    tags: "",                // etiquetas aplicadas a quem entrar, separadas por vírgula
     public_reply: "",
     variantes: [],
     msg1: "",
@@ -514,6 +897,8 @@ function paraEditor(a) {
 
   ed.id = a.id;
   ed.nome = a.nome ?? "";
+  ed.tipo = a.tipo === "story" ? "story" : "post";
+  ed.tags = (a.tags ?? []).join(", ");
   ed.palavras = String(a.keyword ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   ed.match_any = !!a.match_any;
   ed.active = a.active !== false;
@@ -675,11 +1060,26 @@ function voltarDaEdicao() {
 
 function renderBlocoGatilho() {
   const ed = state.ed;
+  const ehStory = ed.tipo === "story";
   $("#bloco-gatilho").innerHTML = `
     <header>
       <h2><span class="num">1</span> O gatilho</h2>
       <p class="pequeno fraco" style="margin-top:5px">O que faz a DM disparar.</p>
     </header>
+
+    <div class="campo">
+      <label>Quando disparar</label>
+      <div class="escolha-tipo" role="radiogroup" aria-label="Tipo de gatilho">
+        <button type="button" role="radio" aria-checked="${!ehStory}" class="opcao-tipo ${!ehStory ? "ativa" : ""}" data-tipo="post">
+          <strong>Comentário em post</strong>
+          <span>A pessoa comenta a palavra num post ou reels.</span>
+        </button>
+        <button type="button" role="radio" aria-checked="${ehStory}" class="opcao-tipo ${ehStory ? "ativa" : ""}" data-tipo="story">
+          <strong>Resposta ao story</strong>
+          <span>A pessoa responde um story seu com a palavra, pelo direct.</span>
+        </button>
+      </div>
+    </div>
 
     <div class="campo">
       <label>Palavras que ativam</label>
@@ -699,16 +1099,20 @@ function renderBlocoGatilho() {
         <span class="trilho"></span>
         <span>Qualquer palavra ativa</span>
       </label>
-      <div class="ajuda">Ligado, qualquer comentário no post dispara a automação (as palavras acima são ignoradas).</div>
+      <div class="ajuda">${ehStory
+        ? "Ligado, qualquer resposta ao story dispara a automação (as palavras acima são ignoradas)."
+        : "Ligado, qualquer comentário no post dispara a automação (as palavras acima são ignoradas)."}</div>
     </div>
 
     <div class="campo">
-      <label>Em quais posts</label>
-      <div id="area-posts"><p class="pequeno fraco">Carregando seus posts...</p></div>
-      <div class="ajuda">Nenhum escolhido significa que a automação vale pra todos os posts.</div>
+      <label>${ehStory ? "Em quais stories" : "Em quais posts"}</label>
+      <div id="area-posts"><p class="pequeno fraco">Carregando...</p></div>
+      <div class="ajuda">${ehStory
+        ? "Nenhum escolhido significa que vale para qualquer story, inclusive os que você postar depois. Stories duram 24 horas, então escolher um específico só faz sentido enquanto ele estiver no ar."
+        : "Nenhum escolhido significa que a automação vale pra todos os posts."}</div>
     </div>
 
-    <div class="campo">
+    ${ehStory ? "" : `<div class="campo">
       <label for="ed-resposta">Resposta no comentário</label>
       <input type="text" id="ed-resposta" data-campo="public_reply" value="${esc(ed.public_reply)}"
              placeholder="Ex: te chamei no direct 💌">
@@ -722,6 +1126,12 @@ function renderBlocoGatilho() {
       </div>
       <button type="button" class="botao pequeno" id="btn-add-variante" style="margin-top:4px">Adicionar variação A/B</button>
       <div class="ajuda">Com mais de uma opção, o sistema alterna entre elas a cada comentário.</div>
+    </div>`}
+
+    <div class="campo">
+      <label for="ed-tags">Etiquetas para quem entrar por aqui (opcional)</label>
+      <input type="text" id="ed-tags" data-campo="tags" value="${esc(ed.tags)}" placeholder="Ex: lancheira, interessada">
+      <div class="ajuda">Separe por vírgula. Aparecem na aba Interações. Vazio: a etiqueta é o nome da automação.</div>
     </div>`;
 
   renderPosts();
@@ -731,28 +1141,48 @@ function renderPosts() {
   const area = $("#area-posts");
   if (!area) return;
   const ed = state.ed;
+  const ehStory = ed.tipo === "story";
+  const lista = ehStory ? state.stories : state.posts;
 
-  if (!state.posts.length) {
-    area.innerHTML = `<div class="aviso"><span>Conecte seu Instagram pra escolher posts específicos.
-      Por enquanto, a automação vale pra todos os posts.</span></div>`;
+  if (!state.midiaCarregada) {
+    area.innerHTML = `<div class="aviso"><span>${sb
+      ? "Carregando..."
+      : "Conecte seu Instagram pra escolher conteúdos específicos. Por enquanto, a automação vale pra todos."}</span></div>`;
     return;
   }
 
-  area.innerHTML = `<div class="posts">
-    ${state.posts.map((p) => `
-      <div class="post ${ed.media_ids.includes(p.id) ? "escolhido" : ""}" data-post="${esc(p.id)}" title="${esc(p.legenda)}">
+  // Escolhidos que já saíram do ar (story vencido, post apagado) continuam valendo até serem tirados.
+  const foraDoAr = ed.media_ids.filter((id) => !lista.some((m) => m.id === id));
+
+  if (!lista.length) {
+    area.innerHTML = `<div class="aviso"><span>${ehStory
+      ? "Você não tem nenhum story no ar agora. Deixe sem escolher para valer para qualquer story, inclusive os próximos."
+      : "Nenhum post encontrado na sua conta."}</span></div>
+      ${foraDoAr.length ? `<p class="pequeno fraco" style="margin-top:8px">${foraDoAr.length} escolhido(s) que não está(ão) mais no ar.
+        <button type="button" class="botao pequeno" data-limpar-midia>Tirar</button></p>` : ""}`;
+    return;
+  }
+
+  area.innerHTML = `<div class="posts ${ehStory ? "stories" : ""}">
+    ${lista.map((p) => `
+      <div class="post ${ed.media_ids.includes(p.id) ? "escolhido" : ""}" data-post="${esc(p.id)}" title="${esc(p.legenda || "")}">
         ${p.miniatura ? `<img src="${esc(p.miniatura)}" alt="">` : ""}
         <span class="marca-check">&check;</span>
       </div>`).join("")}
-  </div>`;
+  </div>
+  ${foraDoAr.length ? `<p class="pequeno fraco" style="margin-top:8px">Mais ${foraDoAr.length} escolhido(s) que não está(ão) mais no ar.
+    <button type="button" class="botao pequeno" data-limpar-midia>Tirar</button></p>` : ""}`;
 }
 
+// Busca os posts e os stories no ar (para o seletor do editor e as miniaturas).
 async function carregarPosts() {
   if (!sb) return;
   try {
     const { data } = await sb.functions.invoke("ig-media");
     state.posts = data?.posts ?? [];
-    renderPosts();
+    state.stories = data?.stories ?? [];
+    state.midiaCarregada = true;
+    if (state.ed) renderPosts();
   } catch (e) {
     console.warn("ig-media indisponível:", e);
   }
@@ -1041,9 +1471,24 @@ function aplicarDestino(botao, valor) {
 }
 
 function aoClicar(e) {
-  const t = e.target.closest("[data-emoji],[data-tirar-palavra],[data-tirar-variante],#btn-add-variante,[data-post],[data-tirar-passo],[data-add-botao],[data-tirar-botao],#btn-add-passo");
+  const t = e.target.closest("[data-emoji],[data-tirar-palavra],[data-tirar-variante],#btn-add-variante,[data-post],[data-tirar-passo],[data-add-botao],[data-tirar-botao],#btn-add-passo,[data-tipo],[data-limpar-midia]");
   if (!t) return;
   const ed = state.ed;
+
+  // Troca entre "Comentário em post" e "Resposta ao story".
+  if (t.dataset.tipo !== undefined) {
+    if (ed.tipo === t.dataset.tipo) return;
+    ed.tipo = t.dataset.tipo;
+    ed.media_ids = [];   // posts e stories são listas diferentes
+    marcarSujo(); renderBlocoGatilho(); renderPrevia(); return;
+  }
+
+  // Tira os escolhidos que já não estão no ar.
+  if (t.dataset.limparMidia !== undefined) {
+    const lista = ed.tipo === "story" ? state.stories : state.posts;
+    ed.media_ids = ed.media_ids.filter((id) => lista.some((m) => m.id === id));
+    marcarSujo(); renderPosts(); return;
+  }
 
   // Emoji: entra no lugar onde o cursor estava.
   if (t.dataset.emoji !== undefined) {
@@ -1139,6 +1584,15 @@ function renderPrevia() {
   if (!ed || !alvo) return;
 
   const partes = [];
+
+  // Automação de story: a conversa começa com a pessoa respondendo o story.
+  if (ed.tipo === "story") {
+    const exemplo = ed.match_any ? "Amei! 😍" : (ed.palavras[0] || "palavra");
+    partes.push(`<div class="resposta-story">
+      <span class="pequeno fraco">Respondeu ao seu story</span>
+      <div class="balao-usuario">${esc(exemplo)}</div>
+    </div>`);
+  }
 
   // Mensagem 1, com os botões colados no balão.
   const botoes1 = [];
@@ -1250,14 +1704,18 @@ async function salvarAutomacao() {
   }
   if (problemas.length) { alert("Falta pouco:\n\n" + problemas.map((p) => "• " + p).join("\n")); return; }
 
+  const ehStory = ed.tipo === "story";
   const linha = {
     nome: ed.nome.trim() || "Automação sem nome",
+    tipo: ehStory ? "story" : "post",
+    tags: String(ed.tags ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     keyword: ed.palavras.join(","),
     match_any: ed.match_any,
     active: ed.active,
     media_ids: ed.media_ids,
-    public_reply: ed.public_reply.trim(),
-    public_reply_variants: ed.variantes.map((v) => v.trim()).filter(Boolean),
+    // Story não tem comentário para responder em público.
+    public_reply: ehStory ? "" : ed.public_reply.trim(),
+    public_reply_variants: ehStory ? [] : ed.variantes.map((v) => v.trim()).filter(Boolean),
     flow: montarFlow(ed),
     asset_ids: ed.asset_ids,
   };

@@ -40,10 +40,28 @@ Deno.serve(async (req) => {
     }
     if (url.searchParams.get("conversas")) {
       out.conversas = await pegar(
-        `${IG}/me/conversations?platform=instagram&fields=id,updated_time,participants,messages.limit(8){id,message,from,created_time}&limit=5`,
+        `${IG}/me/conversations?platform=instagram&fields=id,updated_time,participants,messages.limit(10){id,message,from,created_time,story}&limit=25`,
       );
     }
     return json(out);
+  }
+
+  // POST ?preencher_perfis=1: completa nome e foto dos leads que ainda nao tem.
+  if (url.searchParams.get("preencher_perfis")) {
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+    const db = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+    const { data: leads } = await db.from("ig_leads").select("ig_user_id").is("nome", null).limit(200);
+    let ok = 0; const falhas: string[] = [];
+    for (const l of leads ?? []) {
+      const p: any = await pegar(`${IG}/${l.ig_user_id}?fields=name,username,profile_pic`);
+      if (p?.error) { falhas.push(String(p.error.message)); continue; }
+      const dados: Record<string, unknown> = {};
+      if (p?.name) dados.nome = p.name;
+      if (p?.username) dados.username = p.username;
+      if (p?.profile_pic) dados.foto_url = p.profile_pic;
+      if (Object.keys(dados).length) { await db.from("ig_leads").update(dados).eq("ig_user_id", l.ig_user_id); ok++; }
+    }
+    return json({ leads_sem_perfil: (leads ?? []).length, preenchidos: ok, falhas: [...new Set(falhas)] });
   }
 
   // POST: reenvia um comentario real ao webhook.

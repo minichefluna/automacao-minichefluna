@@ -51,14 +51,24 @@ Deno.serve(async (req) => {
   }
 
   await carregarToken();
-  const soConversas = new URL(req.url).searchParams.get("so") === "conversas";
+  const so = new URL(req.url).searchParams.get("so") ?? "";
+  const soConversas = so === "conversas";
 
   const resumo = {
-    modo: soConversas ? "rapido" : "completo",
-    comentarios_novos: 0, mensagens_novas: 0,
+    modo: so || "completo",
+    comentarios_novos: 0, mensagens_novas: 0, respostas_story: 0,
     fila_enviados: 0, fila_expirados: 0, atrasados_enviados: 0,
     erros_busca: [] as string[],
   };
+
+  // ---------- MODO STORIES: respostas a stories (a cada 20 segundos) ----------
+  if (so === "stories") {
+    if (POLLING && IG_TOKEN && IG_ACCOUNT_ID) {
+      try { await buscarRespostasStory(resumo); }
+      catch (e) { resumo.erros_busca.push(`stories: ${e}`); }
+    }
+    return responder(resumo);
+  }
 
   // ---------- MODO RÁPIDO: só o direct de quem está no meio de uma conversa ----------
   if (soConversas) {
@@ -75,6 +85,8 @@ Deno.serve(async (req) => {
     catch (e) { resumo.erros_busca.push(`comentarios: ${e}`); }
     try { await buscarConversas(resumo, false); }
     catch (e) { resumo.erros_busca.push(`conversas: ${e}`); }
+    try { await buscarRespostasStory(resumo); }
+    catch (e) { resumo.erros_busca.push(`stories: ${e}`); }
   }
 
   // ---------- 1) A FILA ----------
@@ -151,6 +163,7 @@ Deno.serve(async (req) => {
         flow_step: String(passo.id),
         expecting: passo?.collect ?? null,
         aguardando_ate: aguardandoAte(passo),
+        ultimo_envio: new Date().toISOString(),
       }).eq("ig_user_id", s.ig_user_id);
     }
   }
@@ -269,7 +282,7 @@ async function buscarComentarios(resumo: any) {
 // =============================================================
 async function buscarConversas(resumo: any, rapido: boolean) {
   let consulta = db.from("ig_leads")
-    .select("ig_user_id, updated_at, flow_step, automation_id")
+    .select("ig_user_id, updated_at, ultimo_envio, flow_step, automation_id")
     .not("automation_id", "is", null);
   consulta = rapido
     ? consulta.gt("aguardando_ate", new Date().toISOString())
@@ -284,7 +297,7 @@ async function buscarConversas(resumo: any, rapido: boolean) {
     for (const l of leads) {
       const j = await igGet(
         `/me/conversations?platform=instagram&user_id=${l.ig_user_id}` +
-        `&fields=participants,messages.limit(6){id,message,from,created_time}`,
+        `&fields=participants,messages.limit(6){id,message,from,created_time,story}`,
       );
       if (j?.error) { conversas = []; break; }
       conversas.push(...(j?.data ?? []));
@@ -292,7 +305,7 @@ async function buscarConversas(resumo: any, rapido: boolean) {
   }
   if (!conversas.length) {
     const j = await igGet(
-      `/me/conversations?platform=instagram&fields=participants,messages.limit(6){id,message,from,created_time}&limit=25`,
+      `/me/conversations?platform=instagram&fields=participants,messages.limit(6){id,message,from,created_time,story}&limit=25`,
     );
     if (j?.error) { resumo.erros_busca.push(`conversas: ${j.error.message}`); return; }
     conversas = j?.data ?? [];
@@ -307,7 +320,7 @@ async function buscarConversas(resumo: any, rapido: boolean) {
     if (!lead) continue;
 
     // Mensagens da pessoa, depois do último passo que o sistema mandou pra ela.
-    const corte = new Date(lead.updated_at).getTime();
+    const corte = new Date(lead.ultimo_envio ?? lead.updated_at).getTime();
     const novas = (conversa?.messages?.data ?? [])
       .filter((m: any) =>
         String(m?.from?.id) === String(outro.id) &&
@@ -323,22 +336,88 @@ async function buscarConversas(resumo: any, rapido: boolean) {
 
     for (const m of novas) {
       if (vistos.has(`m:${m.id}`)) continue;
-      await encaminhar({
-        object: "instagram",
-        entry: [{
-          id: IG_ACCOUNT_ID,
-          time: Math.floor(Date.now() / 1000),
-          messaging: [{
-            sender: { id: String(outro.id) },
-            recipient: { id: IG_ACCOUNT_ID },
-            timestamp: paraData(m.created_time).getTime(),
-            message: { mid: String(m.id), text: String(m.message) },
-          }],
-        }],
-      });
+      await encaminhar(eventoDeMensagem(String(outro.id), m));
       resumo.mensagens_novas++;
     }
   }
+}
+
+// =============================================================
+// BUSCA ATIVA: respostas a stories
+// Olha as conversas recentes atrás de mensagens que respondem um story.
+// Só roda quando existe automação de story ligada.
+// =============================================================
+async function buscarRespostasStory(resumo: any) {
+  const { data: autos } = await db.from("ig_automations")
+    .select("updated_at, created_at").eq("active", true).eq("tipo", "story");
+  if (!autos?.length) return;
+
+  // Nada anterior à edição mais antiga das automações de story, nem fora da janela.
+  const corte = Math.max(
+    Date.now() - JANELA_BUSCA_MS,
+    Math.min(...autos.map((a: any) => new Date(a.updated_at ?? a.created_at).getTime())),
+  );
+
+  const j = await igGet(
+    `/me/conversations?platform=instagram&fields=participants,messages.limit(5){id,message,from,created_time,story}&limit=25`,
+  );
+  if (j?.error) { resumo.erros_busca.push(`stories: ${j.error.message}`); return; }
+
+  const candidatas: { de: string; m: any }[] = [];
+  for (const conversa of j?.data ?? []) {
+    const outro = (conversa?.participants?.data ?? [])
+      .find((p: any) => String(p.id) !== IG_ACCOUNT_ID);
+    if (!outro) continue;
+    for (const m of conversa?.messages?.data ?? []) {
+      if (String(m?.from?.id) !== String(outro.id)) continue;
+      if (!storyRespondido(m)) continue;
+      if (paraData(m.created_time).getTime() < corte) continue;
+      candidatas.push({ de: String(outro.id), m });
+    }
+  }
+  if (!candidatas.length) return;
+
+  const { data: ja } = await db.from("ig_processed")
+    .select("event_id").in("event_id", candidatas.map((c) => `m:${c.m.id}`));
+  const vistos = new Set((ja ?? []).map((x: any) => x.event_id));
+
+  for (const c of candidatas) {
+    if (vistos.has(`m:${c.m.id}`)) continue;
+    await encaminhar(eventoDeMensagem(c.de, c.m));
+    resumo.respostas_story++;
+  }
+}
+
+// O story que a mensagem responde, se for uma resposta a story.
+// A API pode trazer { reply_to: { id, link } } ou { id, link }; menções
+// ({ mention: ... }) não são respostas e ficam de fora.
+function storyRespondido(m: any): { id: string } | null {
+  const s = m?.story;
+  if (!s) return null;
+  if (s.reply_to?.id) return { id: String(s.reply_to.id) };
+  if (s.mention) return null;
+  if (s.id) return { id: String(s.id) };
+  return null;
+}
+
+// Monta o evento no mesmo formato em que o Meta entregaria a mensagem.
+function eventoDeMensagem(de: string, m: any) {
+  const story = storyRespondido(m);
+  const message: Record<string, unknown> = { mid: String(m.id), text: String(m.message ?? "") };
+  if (story) message.reply_to = { story: { id: story.id } };
+  return {
+    object: "instagram",
+    entry: [{
+      id: IG_ACCOUNT_ID,
+      time: Math.floor(Date.now() / 1000),
+      messaging: [{
+        sender: { id: de },
+        recipient: { id: IG_ACCOUNT_ID },
+        timestamp: paraData(m.created_time).getTime(),
+        message,
+      }],
+    }],
+  };
 }
 
 // Entrega um evento ao webhook, identificado como interno pelo segredo.

@@ -232,6 +232,27 @@ Para desligar a busca ativa, crie o segredo `POLLING_ENABLED` com o valor `false
 A função `ig-diagnostico` (protegida pelo `SCHED_SECRET`) mostra a conta conectada, os
 comentários reais de um post (`?media_id=`) e as conversas recentes (`&conversas=1`).
 
+### Automações de story
+
+No editor, em **Quando disparar**, escolha **Resposta ao story**. A automação dispara quando
+alguém responde um story seu, pelo direct, com uma das palavras (ou com qualquer texto, se
+"qualquer palavra ativa" estiver ligado). Sem stories escolhidos, vale para qualquer story,
+inclusive os que você postar depois. Como a resposta da pessoa já abre a conversa, a Mensagem
+1 sai direto no direct, e não existe resposta pública.
+
+O robô `ig_story_20s` olha o direct a cada 20 segundos, mas só enquanto houver alguma
+automação de story ligada. Rode o `sql/06_interacoes_e_stories.sql` para criá-lo.
+
+### Aba Interações
+
+A planilha de todos os leads: nome, @, foto, origem (comentário ou story, com a miniatura do
+conteúdo), palavra, contato, etiquetas, automação, interações, mensagens enviadas, primeira e
+última vez. Tem busca, filtros, ordenação por coluna, etiquetas editáveis (lápis na célula) e
+**Exportar planilha**, que baixa um CSV que abre direto no Excel e no Google Planilhas.
+
+Cada automação aplica etiquetas a quem entra por ela: as do campo "Etiquetas" do editor ou,
+se ele estiver vazio, o nome da automação.
+
 ---
 
 ## Passo 8: publicar o frontend

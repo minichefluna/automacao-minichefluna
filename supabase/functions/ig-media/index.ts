@@ -53,7 +53,25 @@ Deno.serve(async (req) => {
       data: String(m.timestamp ?? "").slice(0, 10),
     }));
 
-    return new Response(JSON.stringify({ conectado: true, posts }), { headers: cors });
+    // Stories no ar agora (duram 24 horas). Se a API recusar, segue só com os posts.
+    let stories: any[] = [];
+    try {
+      const rs = await fetch(
+        `${GRAPH}/${IG_ACCOUNT_ID}/stories`
+        + `?fields=id,media_type,media_url,thumbnail_url,permalink,timestamp`
+        + `&access_token=${IG_TOKEN}`,
+      );
+      const js = await rs.json();
+      stories = (js?.data ?? []).map((s: any) => ({
+        id: String(s.id),
+        tipo: s.media_type,
+        miniatura: s.thumbnail_url ?? s.media_url ?? "",
+        link: s.permalink ?? "",
+        data: String(s.timestamp ?? ""),
+      }));
+    } catch { /* sem stories */ }
+
+    return new Response(JSON.stringify({ conectado: true, posts, stories }), { headers: cors });
   } catch (e) {
     return new Response(JSON.stringify({ conectado: false, posts: [], motivo: String(e) }), { headers: cors });
   }

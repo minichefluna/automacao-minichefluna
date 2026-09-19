@@ -187,6 +187,9 @@ async function handleComment(v: any) {
   const automacao = await acharAutomacao(texto, mediaId, quando);
   if (!automacao) return;
 
+  // Conta a interação na aba Interações (cria o lead, se for o primeiro contato).
+  await registrarInteracao(fromId, username, "comment", mediaId, true);
+
   // 4) Regra do 1 por dia (contas de teste passam direto).
   const ehTeste = TEST_ACCOUNTS.includes(fromId);
   if (!ehTeste && await recebeuNasUltimas24h(fromId)) {
@@ -200,14 +203,73 @@ async function handleComment(v: any) {
   // 6) Se saiu ou ficou garantido na fila, responde no comentário também.
   if (resultado === "ok" || resultado === "throttled") {
     await responderComentario(commentId, automacao);
-    await salvarLead(fromId, username, automacao, texto);
+    await salvarLead(fromId, username, automacao, texto, "comment", mediaId);
   }
+}
+
+// =============================================================
+// FLUXO DE RESPOSTA AO STORY
+// A pessoa respondeu um story pelo direct. Se o texto casa com uma
+// automação de story, a Mensagem 1 sai direto no direct (a resposta
+// dela já abriu a janela de 24h, então não é resposta a comentário).
+// Retorna true se uma automação foi disparada.
+// =============================================================
+async function handleStoryReply(
+  remetente: string, texto: string, storyId: string, quando: Date | null,
+): Promise<boolean> {
+  const automacao = await acharAutomacaoStory(texto, storyId, quando);
+  if (!automacao) return false;
+
+  await registrarInteracao(remetente, "", "story_reply", storyId, true);
+
+  // Regra do 1 por dia (contas de teste passam direto).
+  if (!TEST_ACCOUNTS.includes(remetente) && await recebeuNasUltimas24h(remetente)) {
+    await log(remetente, automacao.id, "dm", "flow", "erro", "regra do 1 por dia");
+    return true;
+  }
+
+  const passos = automacao?.flow?.steps ?? [];
+  if (!passos.length) return true;
+
+  const envio = await sendStep(automacao, passos[0], { id: remetente });
+  await log(remetente, automacao.id, "dm", "flow", envio.ok ? "ok" : "erro",
+    envio.ok ? "resposta ao story" : (envio.motivo ?? ""));
+
+  if (envio.ok) await salvarLead(remetente, "", automacao, texto, "story_reply", storyId);
+  return true;
+}
+
+// Automação de story que casa com o texto e com o story respondido.
+async function acharAutomacaoStory(texto: string, storyId: string, quando: Date | null) {
+  const { data } = await db.from("ig_automations").select("*")
+    .eq("active", true).eq("tipo", "story");
+  const t = normalizar(texto);
+  const candidatas: { a: any; prioridade: number }[] = [];
+
+  for (const a of data ?? []) {
+    const referencia = a.updated_at ?? a.created_at;
+    if (quando && referencia && new Date(referencia) > quando) continue;
+
+    // Stories escolhidos (vazio = qualquer story).
+    const stories: string[] = (a.media_ids ?? []).map(String);
+    const especifico = stories.length > 0;
+    if (especifico && !stories.includes(storyId)) continue;
+
+    const palavras = String(a.keyword ?? "")
+      .split(",").map((p: string) => normalizar(p)).filter(Boolean);
+    if (!(a.match_any || palavras.some((p: string) => t.includes(p)))) continue;
+
+    candidatas.push({ a, prioridade: (especifico ? 2 : 0) + (a.match_any ? 0 : 1) });
+  }
+  candidatas.sort((x, y) => y.prioridade - x.prioridade);
+  return candidatas[0]?.a ?? null;
 }
 
 // Procura a automação ativa que casa com o texto do comentário e com o post.
 async function acharAutomacao(texto: string, mediaId: string, quando: Date | null = null) {
   const { data } = await db.from("ig_automations").select("*").eq("active", true);
-  const lista = data ?? [];
+  // Comentários só disparam automações de post (as de story têm o fluxo próprio).
+  const lista = (data ?? []).filter((a: any) => (a.tipo ?? "post") === "post");
   const t = normalizar(texto);
   const candidatas: { a: any; prioridade: number }[] = [];
 
@@ -444,6 +506,20 @@ async function handleMessage(evento: any) {
   const chave = mid || `pb:${remetente}:${evento?.postback?.payload ?? ""}:${evento?.timestamp ?? ""}`;
   if (await jaProcessado(`m:${chave}`)) return;
 
+  // ---- Resposta a um story ----
+  // Vem do Meta como message.reply_to.story, e da busca ativa no mesmo formato.
+  const story = evento?.message?.reply_to?.story;
+  if (story?.id) {
+    const quando = evento?.timestamp ? new Date(Number(evento.timestamp)) : null;
+    const disparou = await handleStoryReply(
+      remetente, String(evento?.message?.text ?? ""), String(story.id), quando,
+    );
+    if (disparou) return;
+  }
+
+  // Conta a interação de quem já é lead (não cria lead para mensagem solta).
+  await registrarInteracao(remetente, "", "dm", "", false);
+
   // ---- Toque em botão: pode chegar como POSTBACK ou como QUICK_REPLY ----
   // Os DOIS precisam ser tratados, senão os botões podem simplesmente não funcionar.
   const payload =
@@ -548,11 +624,12 @@ async function avancarFluxo(payload: string, igUserId: string) {
     ig_user_id: igUserId,
     automation_id: automationId,
     flow_step: String(stepId),
-    last_source: "dm",
+    // last_source NÃO muda aqui: a origem é por onde a pessoa entrou (comentário ou story).
     // Se o passo pede um dado, anota o que estamos esperando.
     expecting: passo?.collect ?? null,
     // Se o passo tem botão que continua a conversa, fica de olho nas respostas.
     aguardando_ate: aguardandoAte(passo),
+    ultimo_envio: new Date().toISOString(),
   }, { onConflict: "ig_user_id" });
 
   // Passo com atraso: agenda o próximo pro robô mandar depois.
@@ -569,19 +646,67 @@ async function avancarFluxo(payload: string, igUserId: string) {
 // =============================================================
 // AJUDANTES
 // =============================================================
-async function salvarLead(igUserId: string, username: string, automacao: any, texto: string) {
+async function salvarLead(
+  igUserId: string, username: string, automacao: any, texto: string,
+  origem: string, mediaId: string,
+) {
   const passos = automacao?.flow?.steps ?? [];
-  await db.from("ig_leads").upsert({
+
+  // Etiquetas: as que a pessoa já tinha, mais as da automação (ou o nome dela).
+  const { data: antes } = await db.from("ig_leads")
+    .select("tags, username").eq("ig_user_id", igUserId).maybeSingle();
+  const daAutomacao: string[] = (automacao?.tags ?? []).length
+    ? automacao.tags
+    : [String(automacao?.nome ?? "").trim()].filter(Boolean);
+  const tags = [...new Set([...(antes?.tags ?? []), ...daAutomacao])];
+
+  const registro: Record<string, unknown> = {
     ig_user_id: igUserId,
-    username: username || null,
-    last_source: "comment",
+    last_source: origem,
     last_keyword: texto.slice(0, 200),
+    last_media_id: mediaId || null,
     automation_id: automacao.id,
     flow_step: passos.length ? String(passos[0].id) : null,
     expecting: passos[0]?.collect ?? null,
     // A Mensagem 1 tem botão que continua a conversa? Então fica de olho no direct.
     aguardando_ate: passos.length ? aguardandoAte(passos[0]) : null,
-  }, { onConflict: "ig_user_id" });
+    ultimo_envio: new Date().toISOString(),
+    tags,
+  };
+  if (username || !antes?.username) registro.username = username || null;
+  await db.from("ig_leads").upsert(registro, { onConflict: "ig_user_id" });
+
+  // Nome e foto de perfil, para a aba Interações.
+  await atualizarPerfil(igUserId);
+}
+
+// Conta uma interação da pessoa (função no banco, contagem sem risco de corrida).
+async function registrarInteracao(
+  igUserId: string, username: string, origem: string, mediaId: string, criar: boolean,
+) {
+  const { error } = await db.rpc("registrar_interacao", {
+    p_user: igUserId, p_username: username, p_origem: origem, p_media: mediaId, p_criar: criar,
+  });
+  if (error) console.warn("Não deu pra registrar a interação:", error.message);
+}
+
+// Busca nome, @ e foto de perfil de quem interagiu (API de perfil do Instagram).
+// Se o Instagram não liberar (depende da permissão da pessoa), segue sem.
+async function atualizarPerfil(igUserId: string) {
+  try {
+    const r = await fetch(`${GRAPH}/${igUserId}?fields=name,username,profile_pic`, {
+      headers: { Authorization: `Bearer ${IG_TOKEN}` },
+    });
+    const p = await r.json();
+    if (p?.error) return;
+    const dados: Record<string, unknown> = {};
+    if (p?.name) dados.nome = String(p.name);
+    if (p?.username) dados.username = String(p.username);
+    if (p?.profile_pic) dados.foto_url = String(p.profile_pic);
+    if (Object.keys(dados).length) {
+      await db.from("ig_leads").update(dados).eq("ig_user_id", igUserId);
+    }
+  } catch { /* sem perfil, sem problema */ }
 }
 
 async function log(
