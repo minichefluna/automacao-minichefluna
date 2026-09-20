@@ -248,9 +248,17 @@ quanto no story. Rode o `sql/07_entradas_rapidas.sql` para criá-lo (ele substit
 stories do arquivo 06). Se o Instagram avisar que o limite de uso da API foi atingido, a busca
 rápida pausa sozinha por 10 minutos, e a rodada de cada minuto continua.
 
-A regra das 24 horas vale **por automação**: quem comenta num post e responde um story
-recebe as duas mensagens, mas nunca recebe a mesma automação duas vezes no mesmo dia. Se a
-pessoa estiver em duas conversas ao mesmo tempo, os botões das duas continuam funcionando.
+**Os limites de reenvio, por tipo de automação:**
+
+- **Comentário em post:** a mesma automação sai no máximo uma vez por pessoa a cada 24 horas.
+  Automações diferentes não se bloqueiam, então quem comenta em dois posts diferentes recebe
+  as duas mensagens.
+- **Resposta ao story:** não usa a regra das 24 horas. Cada story respondido rende uma
+  mensagem, então quem responde três stories seguidos recebe as três. O limite é por conteúdo:
+  responder o mesmo story de novo não gera mensagem repetida.
+- As contas em `TEST_IG_ACCOUNTS` ignoram os dois limites.
+
+Se a pessoa estiver em duas conversas ao mesmo tempo, os botões das duas continuam funcionando.
 
 ### Central do Instagram (as cinco abas)
 

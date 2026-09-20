@@ -553,7 +553,8 @@ function igDesenharSaude(s) {
       ${s.automacoes?.length ? `
         <div class="rotulo" style="margin-top:14px">Automações com falha</div>
         <ul class="ig-lista-simples">${s.automacoes.map((a) => `<li><span>${esc(a.nome)}</span><strong>${igNum(a.qtd)}</strong></li>`).join("")}</ul>` : ""}
-      <p class="fraco pequeno ig-nota">Entregue = aceita pelo Instagram. Cancelado = barrado pela regra de uma mesma automação por pessoa a cada 24 horas (não é falha).</p>
+      <p class="fraco pequeno ig-nota">Entregue = aceita pelo Instagram. Cancelado não é falha: nos posts, a mesma automação sai
+        uma vez por pessoa a cada 24 horas; nos stories, uma vez por story respondido.</p>
     ` : `<div class="vazio pequeno-vazio"><p>Nenhum envio neste período.</p></div>`}`;
 }
 
@@ -1738,7 +1739,9 @@ function igDescreverEvento(e, semPessoa = false) {
       if (s === "ok") return { icone: "✓", classe: "ev-ok", rotulo: "DM", status: "Entregue", statusClasse: "ok",
         html: `DM entregue${alvo}${auto}` };
       if (s === "cancelado") return { icone: "⊘", classe: "ev-cancel", rotulo: "DM", status: "Cancelada", statusClasse: "cancel",
-        html: `DM não enviada${alvo}: já recebeu esta automação nas últimas 24 horas${auto}` };
+        html: `DM não enviada${alvo}: ${/story/i.test(String(e.detalhe ?? ""))
+          ? "já recebeu esta automação por este story"
+          : "já recebeu esta automação nas últimas 24 horas"}${auto}` };
       if (s === "na_fila") return { icone: "⏳", classe: "ev-fila", rotulo: "DM", status: "Na fila", statusClasse: "fila",
         html: `DM na fila${alvo}, aguardando o limite de envio${auto}` };
       return { icone: "!", classe: "ev-erro", rotulo: "DM", status: "Falhou", statusClasse: "erro",
@@ -1752,6 +1755,7 @@ function igDescreverEvento(e, semPessoa = false) {
 function igMotivoLegivel(m) {
   const s = String(m ?? "");
   if (/regra do 1 por dia/i.test(s)) return "Mesma automação nas últimas 24 horas (cancelado)";
+  if (/mesmo story/i.test(s)) return "Já recebeu esta automação por este story (cancelado)";
   if (/invalid for a private reply|private antworten|private reply/i.test(s)) return "Comentário não aceita mais resposta privada";
   if (/outside of allowed window|24.?hour/i.test(s)) return "Fora da janela de 24 horas do Instagram";
   if (/does not exist|cannot be loaded/i.test(s)) return "Conteúdo ou pessoa não encontrado";

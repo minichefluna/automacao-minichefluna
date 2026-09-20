@@ -195,12 +195,12 @@ async function handleComment(v: any) {
   // 4) Regra do 1 por dia (contas de teste passam direto). Não é falha: é cancelamento.
   const ehTeste = TEST_ACCOUNTS.includes(fromId);
   if (!ehTeste && await recebeuNasUltimas24h(fromId, automacao.id)) {
-    await log(fromId, automacao.id, "private_reply", "flow", "cancelado", "regra do 1 por dia");
+    await log(fromId, automacao.id, "private_reply", "flow", "cancelado", "regra do 1 por dia", mediaId);
     return;
   }
 
   // 5) Entrega o conteúdo.
-  const resultado = await deliverAutomation(automacao, fromId, commentId, username);
+  const resultado = await deliverAutomation(automacao, fromId, commentId, username, mediaId);
 
   // 6) Se saiu ou ficou garantido na fila, responde no comentário também.
   if (resultado === "ok" || resultado === "throttled") {
@@ -225,9 +225,11 @@ async function handleStoryReply(
   await registrarEvento("story_reply", remetente, automacao.id, storyId, texto, palavraCasada(automacao, texto));
   await registrarInteracao(remetente, "", "story_reply", storyId, true, automacao.id);
 
-  // Regra do 1 por dia (contas de teste passam direto). Não é falha: é cancelamento.
-  if (!TEST_ACCOUNTS.includes(remetente) && await recebeuNasUltimas24h(remetente, automacao.id)) {
-    await log(remetente, automacao.id, "dm", "flow", "cancelado", "regra do 1 por dia");
+  // Story NÃO usa a regra das 24 horas: cada story respondido rende uma mensagem.
+  // O limite é por conteúdo, para quem responde o mesmo story várias vezes não
+  // receber a mesma mensagem repetida. Contas de teste passam direto.
+  if (!TEST_ACCOUNTS.includes(remetente) && await recebeuPorConteudo(remetente, automacao.id, storyId)) {
+    await log(remetente, automacao.id, "dm", "flow", "cancelado", "mesmo story já respondido", storyId);
     return true;
   }
 
@@ -236,7 +238,7 @@ async function handleStoryReply(
 
   const envio = await sendStep(automacao, passos[0], { id: remetente }, remetente);
   await log(remetente, automacao.id, "dm", "flow", envio.ok ? "ok" : "erro",
-    envio.ok ? "resposta ao story" : (envio.motivo ?? ""));
+    envio.ok ? "resposta ao story" : (envio.motivo ?? ""), storyId);
 
   if (envio.ok) await salvarLead(remetente, "", automacao, texto, "story_reply", storyId);
   return true;
@@ -338,7 +340,7 @@ async function aguardandoMaisLongo(igUserId: string, novo: string | null) {
 // "Um link" quanto o "Continua a conversa" moram dentro do flow.
 // =============================================================
 async function deliverAutomation(
-  automacao: any, igUserId: string, commentId: string, username: string,
+  automacao: any, igUserId: string, commentId: string, username: string, mediaId = "",
 ): Promise<"ok" | "throttled" | "erro"> {
   const passos = automacao?.flow?.steps ?? [];
   if (passos.length === 0) return "erro";
@@ -358,7 +360,7 @@ async function deliverAutomation(
       username,
       status: "pendente",
     }, { onConflict: "comment_id" });
-    await log(igUserId, automacao.id, "private_reply", "flow", "na_fila", "sem ficha no freio");
+    await log(igUserId, automacao.id, "private_reply", "flow", "na_fila", "sem ficha no freio", mediaId);
     return "throttled";
   }
 
@@ -371,7 +373,7 @@ async function deliverAutomation(
 
   await log(
     igUserId, automacao.id, "private_reply", "flow",
-    envio.ok ? "ok" : "erro", envio.motivo ?? "",
+    envio.ok ? "ok" : "erro", envio.motivo ?? "", mediaId,
   );
 
   return envio.ok ? "ok" : "erro";
@@ -824,12 +826,25 @@ async function atualizarPerfil(igUserId: string) {
 async function log(
   igUserId: string, automationId: string | null,
   canal: string, tipo: string, status: string, motivo: string,
+  mediaId: string | null = null,
 ) {
   await db.from("ig_deliveries").insert({
     ig_user_id: igUserId,
     automation_id: automationId,
     canal, tipo, status, motivo: motivo.slice(0, 500),
+    media_id: mediaId || null,
   });
+}
+
+// A pessoa já recebeu ESTA automação por ESTE story (ou post)?
+// É o limite das automações de story: uma mensagem por conteúdo respondido.
+// Respondeu o story seguinte, recebe de novo, sem esperar 24 horas.
+async function recebeuPorConteudo(igUserId: string, automationId: string, mediaId: string) {
+  if (!mediaId) return false;
+  const { data } = await db.from("ig_deliveries")
+    .select("id").eq("ig_user_id", igUserId).eq("automation_id", automationId)
+    .eq("media_id", mediaId).eq("status", "ok").limit(1);
+  return (data?.length ?? 0) > 0;
 }
 
 // O Instagram manda datas como "2026-09-18T23:33:59+0000" (sem os dois-pontos
